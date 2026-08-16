@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Leitor de Cartão-Resposta — SIGA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy-1: #0b1f3a;
+    --navy-2: #12315c;
+    --yellow: #ffc72c;
+    --blue: #2f7bff;
+    --ok: #1fb26b;
+    --warn: #e0a300;
+    --err: #e6473a;
+    --paper: #f7f8fb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Poppins', sans-serif;
+    background: var(--paper);
+    color: #16233d;
+  }
+  header {
+    background: linear-gradient(135deg, var(--navy-1), var(--navy-2) 60%, #163a6e);
+    color: white;
+    padding: 22px 20px 26px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  header::after {
+    content: '';
+    position: absolute;
+    right: -40px; top: -60px;
+    width: 180px; height: 180px;
+    background: radial-gradient(circle, rgba(255,199,44,0.25), transparent 70%);
+  }
+  header h1 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin: 0 0 4px;
+    letter-spacing: 0.2px;
+  }
+  header p {
+    margin: 0;
+    font-size: 0.82rem;
+    color: #b9c8e6;
+    font-weight: 400;
+  }
+  main {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 18px 16px 60px;
+  }
+  .card {
+    background: white;
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(11,31,58,0.08), 0 1px 2px rgba(11,31,58,0.06);
+    border: 1px solid #e8ecf3;
+  }
+  .modo-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .modo-btn {
+    flex: 1;
+    padding: 13px 10px;
+    border-radius: 10px;
+    border: 2px solid #e8ecf3;
+    background: white;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: #4a5a78;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .modo-btn.ativo {
+    border-color: var(--blue);
+    background: linear-gradient(135deg, var(--blue), #1a5fd6);
+    color: white;
+    box-shadow: 0 4px 10px rgba(47,123,255,0.28);
+  }
+  video, #canvasCapturado {
+    width: 100%;
+    border-radius: 10px;
+    background: #000;
+    display: block;
+  }
+  .video-wrap { position: relative; }
+  .guia-overlay {
+    position: absolute;
+    inset: 0;
+    border: 2px dashed rgba(255,199,44,0.85);
+    margin: 8%;
+    border-radius: 10px;
+    pointer-events: none;
+  }
+  .btn-principal {
+    width: 100%;
+    padding: 15px;
+    margin-top: 12px;
+    border-radius: 10px;
+    border: none;
+    background: linear-gradient(135deg, var(--yellow), #ffb200);
+    color: #16233d;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(255,178,0,0.35);
+  }
+  .btn-principal:disabled {
+    opacity: 0.5;
+    box-shadow: none;
+  }
+  .btn-secundario {
+    width: 100%;
+    padding: 12px;
+    margin-top: 8px;
+    border-radius: 10px;
+    border: 2px solid #e8ecf3;
+    background: white;
+    color: #4a5a78;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  input[type=file] { display: none; }
+  .file-drop {
+    border: 2px dashed #c7d2e5;
+    border-radius: 12px;
+    padding: 36px 16px;
+    text-align: center;
+    color: #6b7a99;
+    cursor: pointer;
+    font-size: 0.88rem;
+    font-weight: 500;
+    display: block;
+  }
+  .file-drop:active { background: #f0f3f9; }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: #eef2fb;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #2f4570;
+  }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2.5px solid #c7d2e5;
+    border-top-color: var(--blue);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .qr-box {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 14px;
+    background: #f0f3f9;
+    border-radius: 10px;
+    margin-bottom: 14px;
+    gap: 10px;
+  }
+  .qr-box .label { font-size: 0.72rem; color: #6b7a99; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; }
+  .qr-box .valor { font-size: 0.82rem; font-weight: 700; color: #16233d; font-family: monospace; word-break: break-all; text-align: right; }
+  table.respostas {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+  }
+  table.respostas th {
+    text-align: left;
+    font-size: 0.7rem;
+    color: #8592ab;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 6px 4px;
+    border-bottom: 2px solid #eef1f7;
+  }
+  table.respostas td {
+    padding: 9px 4px;
+    border-bottom: 1px solid #f1f3f9;
+    font-weight: 600;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    font-weight: 700;
+    font-size: 0.82rem;
+  }
+  .badge.marcada { background: #e4f8ee; color: var(--ok); }
+  .badge.vazia { background: #fcece9; color: var(--err); }
+  .badge.ambigua { background: #fff6e0; color: var(--warn); }
+  .resumo {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .resumo .item {
+    flex: 1;
+    text-align: center;
+    padding: 10px 4px;
+    border-radius: 10px;
+    background: #f0f3f9;
+  }
+  .resumo .item .num { font-size: 1.3rem; font-weight: 800; color: var(--navy-2); }
+  .resumo .item .txt { font-size: 0.68rem; color: #6b7a99; font-weight: 600; text-transform: uppercase; }
+  canvas#canvasOverlay {
+    width: 100%;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    border: 1px solid #e8ecf3;
+    display: block;
+  }
+  .erro-box {
+    background: #fcece9;
+    color: #b8291c;
+    padding: 14px;
+    border-radius: 10px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    line-height: 1.4;
+  }
+  .rodape-teste {
+    font-size: 0.72rem;
+    color: #9aa6bd;
+    text-align: center;
+    margin-top: 18px;
+    line-height: 1.5;
+  }
+  label.check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82rem;
+    color: #4a5a78;
+    font-weight: 500;
+    margin-top: 4px;
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📋 Leitor de Cartão-Resposta</h1>
+  <p>Protótipo client-side · OpenCV.js + jsQR</p>
+</header>
+
+<main>
+
+  <div class="card">
+    <div class="modo-tabs">
+      <button class="modo-btn ativo" id="btnModoCamera">📷 Usar câmera</button>
+      <button class="modo-btn" id="btnModoArquivo">📁 Enviar arquivo</button>
+    </div>
+
+    <div id="painelCamera">
+      <div class="video-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <div class="guia-overlay"></div>
+      </div>
+      <button class="btn-principal" id="btnCapturar">Capturar foto</button>
+      <p style="font-size:0.75rem;color:#8592ab;text-align:center;margin-top:8px;">
+        Alinhe os 4 cantos do cartão dentro da guia amarela
+      </p>
+    </div>
+
+    <div id="painelArquivo" class="hidden">
+      <label class="file-drop" id="fileDropLabel">
+        📎 Toque para escolher uma foto do cartão
+        <input type="file" id="inputArquivo" accept="image/*">
+      </label>
+    </div>
+
+    <label class="check">
+      <input type="checkbox" id="checkGabarito">
+      Comparar com gabarito de teste (cartão da Alice)
+    </label>
+  </div>
+
+  <div id="areaResultado"></div>
+
+  <p class="rodape-teste">
+    Todo o processamento (leitura de QR e das bolhas) acontece localmente no seu navegador —
+    nenhuma imagem é enviada a servidor algum.
+  </p>
+
+</main>
+
+<canvas id="canvasCapturado" class="hidden"></canvas>
+
+<!-- OpenCV.js (WebAssembly) -->
+<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+<!-- jsQR para leitura de QR code -->
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+
+<script>
+/* =========================================================================
+   ESTADO GERAL
+   ========================================================================= */
+let cvReady = false;
+let stream = null;
+const OUT_W = 1700, OUT_H = 3000; // tamanho canonico do cartao retificado
+
+// gabarito de teste (cartao da Alice, usado so quando o checkbox esta marcado)
+const GABARITO_TESTE = {1:'A',2:'A',3:'B',4:'E',5:'C',6:'A',7:'B',8:'C',9:'D',10:'E'};
+
+const video = document.getElementById('video');
+const canvasCapturado = document.getElementById('canvasCapturado');
+const areaResultado = document.getElementById('areaResultado');
+
+/* =========================================================================
+   OPENCV.JS — AGUARDA CARREGAR
+   ========================================================================= */
+function onOpenCvReady() {
+  cvReady = true;
+}
+const checkCvInterval = setInterval(() => {
+  if (typeof cv !== 'undefined' && cv.Mat) {
+    cv['onRuntimeInitialized'] = onOpenCvReady;
+    clearInterval(checkCvInterval);
+  }
+}, 100);
+
+/* =========================================================================
+   TABS: CÂMERA x ARQUIVO
+   ========================================================================= */
+const btnModoCamera = document.getElementById('btnModoCamera');
+const btnModoArquivo = document.getElementById('btnModoArquivo');
+const painelCamera = document.getElementById('painelCamera');
+const painelArquivo = document.getElementById('painelArquivo');
+
+btnModoCamera.onclick = () => {
+  btnModoCamera.classList.add('ativo');
+  btnModoArquivo.classList.remove('ativo');
+  painelCamera.classList.remove('hidden');
+  painelArquivo.classList.add('hidden');
+  iniciarCamera();
+};
+
+btnModoArquivo.onclick = () => {
+  btnModoArquivo.classList.add('ativo');
+  btnModoCamera.classList.remove('ativo');
+  painelArquivo.classList.remove('hidden');
+  painelCamera.classList.add('hidden');
+  pararCamera();
+};
+
+/* =========================================================================
+   CÂMERA
+   ========================================================================= */
+async function iniciarCamera() {
+  try {
+    pararCamera();
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
+    video.srcObject = stream;
+  } catch (err) {
+    areaResultado.innerHTML = `<div class="card"><div class="erro-box">
+      Não foi possível acessar a câmera: ${err.message}.<br>
+      Verifique se você concedeu permissão de câmera para este site, ou use a opção "Enviar arquivo".
+    </div></div>`;
+  }
+}
+
+function pararCamera() {
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+}
+
+document.getElementById('btnCapturar').onclick = () => {
+  const w = video.videoWidth, h = video.videoHeight;
+  if (!w || !h) return;
+  canvasCapturado.width = w;
+  canvasCapturado.height = h;
+  const ctx = canvasCapturado.getContext('2d');
+  ctx.drawImage(video, 0, 0, w, h);
+  pararCamera();
+  processarImagemCapturada();
+};
+
+/* =========================================================================
+   UPLOAD DE ARQUIVO
+   ========================================================================= */
+document.getElementById('inputArquivo').onchange = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const img = new Image();
+  img.onload = () => {
+    canvasCapturado.width = img.naturalWidth;
+    canvasCapturado.height = img.naturalHeight;
+    const ctx = canvasCapturado.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    processarImagemCapturada();
+  };
+  img.src = URL.createObjectURL(file);
+};
+
+/* =========================================================================
+   PIPELINE PRINCIPAL
+   ========================================================================= */
+function mostrarStatus(msg) {
+  areaResultado.innerHTML = `<div class="card"><div class="status"><div class="spinner"></div>${msg}</div></div>`;
+}
+
+function mostrarErro(msg) {
+  areaResultado.innerHTML = `<div class="card"><div class="erro-box">${msg}</div></div>`;
+}
+
+async function processarImagemCapturada() {
+  if (!cvReady) {
+    mostrarStatus('Carregando o mecanismo de visão computacional (OpenCV.js)... aguarde alguns segundos.');
+    await esperarCvPronto();
+  }
+  mostrarStatus('Processando cartão-resposta...');
+
+  const t0 = performance.now();
+
+  try {
+    const src = cv.imread(canvasCapturado);
+
+    const cantos = detectarCantos(src);
+    if (!cantos) {
+      src.delete();
+      mostrarErro(
+        '⚠️ Não foi possível localizar os 4 marcadores de canto do cartão.<br><br>' +
+        'Dicas: aproxime a câmera, garanta boa iluminação e verifique se nenhum dedo está cobrindo os cantos pretos da folha.'
+      );
+      return;
+    }
+
+    const warped = corrigirPerspectiva(src, cantos);
+    src.delete();
+
+    const qrTexto = lerQRCode(warped);
+
+    const grade = detectarBolhas(warped);
+    const totalQuestoes = Object.keys(grade).length;
+    if (totalQuestoes < 10) {
+      renderizarResultado(warped, grade, {}, qrTexto, performance.now() - t0,
+        `⚠️ Só foi possível localizar ${totalQuestoes}/10 linhas de questões com confiança. Resultado abaixo é parcial.`);
+      warped.delete();
+      return;
+    }
+
+    const { respostas, ambiguas } = lerRespostas(warped, grade);
+
+    const elapsed = performance.now() - t0;
+    renderizarResultado(warped, grade, respostas, qrTexto, elapsed, null, ambiguas);
+    warped.delete();
+
+  } catch (err) {
+    console.error(err);
+    mostrarErro('Erro inesperado ao processar a imagem: ' + err.message);
+  }
+}
+
+function esperarCvPronto() {
+  return new Promise(resolve => {
+    const iv = setInterval(() => {
+      if (cvReady) { clearInterval(iv); resolve(); }
+    }, 100);
+  });
+}
+
+/* =========================================================================
+   1) DETECÇÃO DE CANTOS
+   ========================================================================= */
+function detectarCantos(src) {
+  const w = src.cols, h = src.rows;
+  const gray = new cv.Mat();
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  const thresh = new cv.Mat();
+  cv.threshold(gray, thresh, 70, 255, cv.THRESH_BINARY_INV);
+
+  const regioes = {
+    top_left:     [0.00, 0.15, 0.00, 0.12],
+    top_right:    [0.85, 1.00, 0.00, 0.12],
+    bottom_left:  [0.00, 0.15, 0.75, 1.00],
+    bottom_right: [0.85, 1.00, 0.75, 1.00],
+  };
+
+  const areaMinima = 0.0004 * w * h;
+  const cantos = {};
+
+  for (const nome in regioes) {
+    const [x0f, x1f, y0f, y1f] = regioes[nome];
+    const x0 = Math.floor(x0f * w), x1 = Math.floor(x1f * w);
+    const y0 = Math.floor(y0f * h), y1 = Math.floor(y1f * h);
+    const rect = new cv.Rect(x0, y0, x1 - x0, y1 - y0);
+    const roi = thresh.roi(rect);
+
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(roi, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+    let maiorArea = 0, melhor = null;
+    for (let i = 0; i < contours.size(); i++) {
+      const cnt = contours.get(i);
+      const area = cv.contourArea(cnt);
+      if (area > maiorArea && area > areaMinima) {
+        maiorArea = area;
+        const br = cv.boundingRect(cnt);
+        melhor = { cx: x0 + br.x + br.width / 2, cy: y0 + br.y + br.height / 2 };
+      }
+      cnt.delete();
+    }
+    if (melhor) cantos[nome] = melhor;
+
+    roi.delete(); contours.delete(); hierarchy.delete();
+  }
+
+  gray.delete(); thresh.delete();
+
+  const nomes = ['top_left', 'top_right', 'bottom_right', 'bottom_left'];
+  if (nomes.every(n => cantos[n])) {
+    return nomes.map(n => cantos[n]);
+  }
+  return null;
+}
+
+/* =========================================================================
+   2) CORREÇÃO DE PERSPECTIVA
+   ========================================================================= */
+function corrigirPerspectiva(src, cantos) {
+  const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+    cantos[0].cx, cantos[0].cy,
+    cantos[1].cx, cantos[1].cy,
+    cantos[2].cx, cantos[2].cy,
+    cantos[3].cx, cantos[3].cy,
+  ]);
+  const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+    0, 0,  OUT_W, 0,  OUT_W, OUT_H,  0, OUT_H,
+  ]);
+  const M = cv.getPerspectiveTransform(srcTri, dstTri);
+  const dst = new cv.Mat();
+  cv.warpPerspective(src, dst, M, new cv.Size(OUT_W, OUT_H));
+  srcTri.delete(); dstTri.delete(); M.delete();
+  return dst;
+}
+
+/* =========================================================================
+   3) LEITURA DO QR CODE (via jsQR)
+   ========================================================================= */
+function lerQRCode(warpedMat) {
+  const tmpCanvas = document.createElement('canvas');
+  tmpCanvas.width = warpedMat.cols;
+  tmpCanvas.height = warpedMat.rows;
+  cv.imshow(tmpCanvas, warpedMat);
+  const ctx = tmpCanvas.getContext('2d');
+  const imgData = ctx.getImageData(0, 0, tmpCanvas.width, tmpCanvas.height);
+  const resultado = jsQR(imgData.data, imgData.width, imgData.height);
+  return resultado ? resultado.data : null;
+}
+
+/* =========================================================================
+   4) DETECÇÃO DAS BOLHAS
+   ========================================================================= */
+function detectarBolhas(warpedMat) {
+  const gray = new cv.Mat();
+  cv.cvtColor(warpedMat, gray, cv.COLOR_RGBA2GRAY);
+
+  const qrRect = new cv.Rect(1340, 30, 300, 370);
+  const qrRoi = gray.roi(qrRect);
+  qrRoi.setTo(new cv.Scalar(255));
+  qrRoi.delete();
+
+  const blur = new cv.Mat();
+  cv.medianBlur(gray, blur, 5);
+
+  const blocos = {
+    esquerda: [150, 780],
+    direita: [950, 1580],
+  };
+  const y0 = 195, y1 = 800;
+
+  const grade = {};
+  const LETRAS = ['A', 'B', 'C', 'D', 'E'];
+
+  for (const nome in blocos) {
+    const [x0, x1] = blocos[nome];
+    const rect = new cv.Rect(x0, y0, x1 - x0, y1 - y0);
+    const roi = blur.roi(rect);
+
+    const circles = new cv.Mat();
+    cv.HoughCircles(roi, circles, cv.HOUGH_GRADIENT, 1, 40, 60, 18, 18, 35);
+
+    let pontos = [];
+    for (let i = 0; i < circles.cols; i++) {
+      const cx = circles.data32F[i * 3] + x0;
+      const cy = circles.data32F[i * 3 + 1] + y0;
+      const r = circles.data32F[i * 3 + 2];
+      pontos.push({ x: cx, y: cy, r });
+    }
+    circles.delete(); roi.delete();
+
+    pontos.sort((a, b) => a.y - b.y);
+    const linhas = [];
+    const tolY = 20;
+    for (const p of pontos) {
+      let colocado = false;
+      for (const linha of linhas) {
+        const mediaY = linha.reduce((s, q) => s + q.y, 0) / linha.length;
+        if (Math.abs(mediaY - p.y) < tolY) { linha.push(p); colocado = true; break; }
+      }
+      if (!colocado) linhas.push([p]);
+    }
+    const linhasValidas = linhas.filter(l => l.length === 5)
+      .sort((a, b) => (a.reduce((s,q)=>s+q.y,0)/5) - (b.reduce((s,q)=>s+q.y,0)/5))
+      .slice(0, 5);
+
+    for (const linha of linhasValidas) linha.sort((a, b) => a.x - b.x);
+
+    const offset = (nome === 'esquerda') ? 1 : 6;
+    linhasValidas.forEach((linha, i) => {
+      const q = offset + i;
+      grade[q] = linha.map((p, idx) => ({ letra: LETRAS[idx], x: p.x, y: p.y, r: p.r }));
+    });
+  }
+
+  gray.delete(); blur.delete();
+  return grade;
+}
+
+/* =========================================================================
+   5) LEITURA DE PREENCHIMENTO
+   ========================================================================= */
+function lerRespostas(warpedMat, grade) {
+  const gray = new cv.Mat();
+  cv.cvtColor(warpedMat, gray, cv.COLOR_RGBA2GRAY);
+
+  const respostas = {};
+  const ambiguas = new Set();
+  const LIMIAR_MARCACAO = 0.28;
+  const MARGEM_AMBIGUA = 0.12;
+
+  for (const q in grade) {
+    const bolhas = grade[q];
+    const scores = {};
+    for (const b of bolhas) {
+      const raioInterno = Math.round(b.r * 0.65);
+      const mask = cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8UC1);
+      cv.circle(mask, new cv.Point(Math.round(b.x), Math.round(b.y)), raioInterno, new cv.Scalar(255), -1);
+      const mean = cv.mean(gray, mask);
+      mask.delete();
+      scores[b.letra] = 1 - (mean[0] / 255);
+    }
+
+    const letras = Object.keys(scores);
+    letras.sort((a, b) => scores[b] - scores[a]);
+    const maior = scores[letras[0]];
+    const segunda = scores[letras[1]] || 0;
+
+    if (maior < LIMIAR_MARCACAO) {
+      respostas[q] = null;
+    } else {
+      respostas[q] = letras[0];
+      if ((maior - segunda) < MARGEM_AMBIGUA) ambiguas.add(q);
+    }
+  }
+
+  gray.delete();
+  return { respostas, ambiguas };
+}
+
+/* =========================================================================
+   RENDERIZAÇÃO DO RESULTADO
+   ========================================================================= */
+function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, avisoParcial, ambiguas) {
+  ambiguas = ambiguas || new Set();
+  const compararGabarito = document.getElementById('checkGabarito').checked;
+
+  const overlayCanvas = document.createElement('canvas');
+  overlayCanvas.id = 'canvasOverlay';
+  overlayCanvas.width = warpedMat.cols;
+  overlayCanvas.height = warpedMat.rows;
+  cv.imshow(overlayCanvas, warpedMat);
+  const ctx = overlayCanvas.getContext('2d');
+
+  for (const q in grade) {
+    for (const b of grade[q]) {
+      const marcada = respostas[q] === b.letra;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, 2 * Math.PI);
+      ctx.lineWidth = 6;
+      if (marcada && ambiguas.has(q)) ctx.strokeStyle = '#e0a300';
+      else if (marcada) ctx.strokeStyle = '#1fb26b';
+      else ctx.strokeStyle = 'rgba(120,130,150,0.35)';
+      ctx.stroke();
+    }
+  }
+
+  let acertos = 0, totalComparado = 0;
+  let linhasTabela = '';
+  for (let q = 1; q <= 10; q++) {
+    const marcada = respostas[q];
+    const ambigua = ambiguas.has(String(q));
+    let badgeClass = marcada ? 'marcada' : 'vazia';
+    if (ambigua) badgeClass = 'ambigua';
+
+    let colGabarito = '';
+    if (compararGabarito) {
+      const esperado = GABARITO_TESTE[q];
+      const ok = marcada === esperado;
+      totalComparado++;
+      if (ok) acertos++;
+      colGabarito = `<td style="color:${ok ? '#1fb26b' : '#e6473a'}">${esperado}${ok ? ' ✓' : ' ✗'}</td>`;
+    }
+
+    linhasTabela += `
+      <tr>
+        <td>${String(q).padStart(2,'0')}</td>
+        <td><span class="badge ${badgeClass}">${marcada || '—'}</span></td>
+        ${compararGabarito ? colGabarito : ''}
+      </tr>`;
+  }
+
+  const qrHtml = qrTexto
+    ? `<div class="qr-box"><span class="label">QR Code</span><span class="valor">${qrTexto}</span></div>`
+    : `<div class="qr-box"><span class="label">QR Code</span><span class="valor" style="color:#e6473a">não lido</span></div>`;
+
+  areaResultado.innerHTML = `
+    <div class="card">
+      ${avisoParcial ? `<div class="erro-box" style="margin-bottom:14px;">${avisoParcial}</div>` : ''}
+      <div id="overlayHost"></div>
+      ${qrHtml}
+      <table class="respostas">
+        <thead><tr><th>Questão</th><th>Marcada</th>${compararGabarito ? '<th>Gabarito</th>' : ''}</tr></thead>
+        <tbody>${linhasTabela}</tbody>
+      </table>
+      <div class="resumo">
+        <div class="item"><div class="num">${elapsedMs.toFixed(0)}ms</div><div class="txt">Tempo</div></div>
+        <div class="item"><div class="num">${ambiguas.size}</div><div class="txt">Ambíguas</div></div>
+        ${compararGabarito ? `<div class="item"><div class="num">${acertos}/${totalComparado}</div><div class="txt">Acurácia</div></div>` : ''}
+      </div>
+    </div>
+    <button class="btn-secundario" id="btnNovaLeitura">🔄 Nova leitura</button>
+  `;
+  document.getElementById('overlayHost').appendChild(overlayCanvas);
+  document.getElementById('btnNovaLeitura').onclick = () => {
+    areaResultado.innerHTML = '';
+    if (!painelCamera.classList.contains('hidden')) iniciarCamera();
+  };
+}
+
+/* inicia no modo câmera por padrão */
+iniciarCamera();
+</script>
+
+</body>
+</html>

@@ -95,19 +95,23 @@
     display: block;
   }
   .video-wrap { position: relative; }
-  .guia-overlay {
+  .corner-bracket {
     position: absolute;
-    inset: 0;
-    border: 2px dashed rgba(255,199,44,0.85);
-    margin: 8%;
-    border-radius: 10px;
+    width: 56px;
+    height: 56px;
+    border-color: rgba(255,199,44,0.9);
+    border-style: dashed;
+    transition: border-color 0.2s ease, border-style 0.2s ease;
     pointer-events: none;
-    transition: border-color 0.2s ease;
   }
-  .guia-overlay.tudo-ok {
-    border-color: rgba(31,178,107,0.9);
+  .corner-bracket.ok {
+    border-color: #1fb26b;
     border-style: solid;
   }
+  .corner-bracket.tl { top: 8%; left: 6%; border-width: 4px 0 0 4px; border-top-left-radius: 8px; }
+  .corner-bracket.tr { top: 8%; right: 6%; border-width: 4px 4px 0 0; border-top-right-radius: 8px; }
+  .corner-bracket.bl { bottom: 8%; left: 6%; border-width: 0 0 4px 4px; border-bottom-left-radius: 8px; }
+  .corner-bracket.br { bottom: 8%; right: 6%; border-width: 0 4px 4px 0; border-bottom-right-radius: 8px; }
   .status-cantos {
     display: flex;
     align-items: center;
@@ -326,11 +330,12 @@
     <div id="painelCamera">
       <div class="video-wrap">
         <video id="video" autoplay playsinline muted></video>
-        <div class="guia-overlay" id="guiaOverlay"></div>
+        <div class="corner-bracket tl" id="cornerTL"></div>
+        <div class="corner-bracket tr" id="cornerTR"></div>
+        <div class="corner-bracket bl" id="cornerBL"></div>
+        <div class="corner-bracket br" id="cornerBR"></div>
       </div>
       <div class="status-cantos" id="statusCantos">
-        <span class="dot" id="dotTL"></span><span class="dot" id="dotTR"></span>
-        <span class="dot" id="dotBL"></span><span class="dot" id="dotBR"></span>
         <span id="textoCantos">Aponte para o cartão...</span>
       </div>
       <label class="check" style="margin-top:4px;">
@@ -534,29 +539,25 @@ function verificarCantosAoVivo() {
 }
 
 function atualizarIndicadorCantos(cantos) {
-  const dots = { top_left: 'dotTL', top_right: 'dotTR', bottom_left: 'dotBL', bottom_right: 'dotBR' };
+  const brackets = { top_left: 'cornerTL', top_right: 'cornerTR', bottom_left: 'cornerBL', bottom_right: 'cornerBR' };
   let count = 0;
-  for (const nome in dots) {
+  for (const nome in brackets) {
     const encontrado = !!cantos[nome];
     if (encontrado) count++;
-    const el = document.getElementById(dots[nome]);
+    const el = document.getElementById(brackets[nome]);
     if (el) el.classList.toggle('ok', encontrado);
   }
 
   const textoEl = document.getElementById('textoCantos');
-  const overlayEl = document.getElementById('guiaOverlay');
-  if (!textoEl || !overlayEl) return;
+  if (!textoEl) return;
 
   const autoCapturaAtiva = document.getElementById('checkAutoCaptura')?.checked;
 
   if (count === 4) {
-    overlayEl.classList.add('tudo-ok');
-
     if (capturaAutomaticaDisparada) {
       textoEl.textContent = '📸 Capturando...';
       return;
     }
-
     if (autoCapturaAtiva) {
       contagemEstavel++;
       const faltam = LIMIAR_ESTABILIDADE - contagemEstavel;
@@ -573,7 +574,6 @@ function atualizarIndicadorCantos(cantos) {
     }
   } else {
     contagemEstavel = 0;
-    overlayEl.classList.remove('tudo-ok');
     textoEl.textContent = count === 0
       ? 'Aponte para o cartão...'
       : `Ajuste o enquadramento (${count}/4 cantos visíveis)`;

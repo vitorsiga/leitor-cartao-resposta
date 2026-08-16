@@ -550,9 +550,51 @@ async function processarImagemCapturada() {
 
 /* =========================================================================
    1) DETECÇÃO DE CANTOS
+   Duas etapas: primeiro localiza o proprio retangulo do papel (maior blob
+   claro da foto), depois busca os 4 marcadores de canto em regioes
+   relativas a ESSE retangulo -- nao a foto inteira. Isso e necessario
+   porque fotos tiradas de mais longe (com fundo visivel ao redor do
+   cartao) fariam a busca por fracao-da-foto-inteira encontrar "cantos"
+   no proprio fundo, em vez do papel.
    ========================================================================= */
-function detectarCantos(src) {
+function detectarPapel(src) {
   const w = src.cols, h = src.rows;
+  const gray = new cv.Mat();
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  const threshPapel = new cv.Mat();
+  cv.threshold(gray, threshPapel, 150, 255, cv.THRESH_BINARY);
+
+  // fecha buracos (texto, QR code) para o papel virar um blob solido
+  const kernel = cv.Mat.ones(25, 25, cv.CV_8U);
+  const fechado = new cv.Mat();
+  cv.morphologyEx(threshPapel, fechado, cv.MORPH_CLOSE, kernel);
+
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
+  cv.findContours(fechado, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  let maiorArea = 0, melhorRect = null;
+  for (let i = 0; i < contours.size(); i++) {
+    const cnt = contours.get(i);
+    const area = cv.contourArea(cnt);
+    if (area > maiorArea) {
+      maiorArea = area;
+      melhorRect = cv.boundingRect(cnt);
+    }
+    cnt.delete();
+  }
+
+  gray.delete(); threshPapel.delete(); kernel.delete(); fechado.delete();
+  contours.delete(); hierarchy.delete();
+
+  return melhorRect; // {x, y, width, height} ou null
+}
+
+function detectarCantos(src) {
+  const papel = detectarPapel(src);
+  if (!papel) return null;
+  const { x: px, y: py, width: pw, height: ph } = papel;
+
   const gray = new cv.Mat();
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
   const thresh = new cv.Mat();
@@ -565,14 +607,19 @@ function detectarCantos(src) {
     bottom_right: [0.85, 1.00, 0.75, 1.00],
   };
 
-  const areaMinima = 0.0004 * w * h;
+  // regioes agora relativas ao retangulo do PAPEL, nao a foto inteira
+  const areaMinima = 0.0004 * pw * ph;
   const cantos = {};
 
   for (const nome in regioes) {
     const [x0f, x1f, y0f, y1f] = regioes[nome];
-    const x0 = Math.floor(x0f * w), x1 = Math.floor(x1f * w);
-    const y0 = Math.floor(y0f * h), y1 = Math.floor(y1f * h);
-    const rect = new cv.Rect(x0, y0, x1 - x0, y1 - y0);
+    const x0 = px + Math.floor(x0f * pw), x1 = px + Math.floor(x1f * pw);
+    const y0 = py + Math.floor(y0f * ph), y1 = py + Math.floor(y1f * ph);
+    const rectX0 = Math.max(0, x0), rectY0 = Math.max(0, y0);
+    const rectX1 = Math.min(src.cols, x1), rectY1 = Math.min(src.rows, y1);
+    if (rectX1 <= rectX0 || rectY1 <= rectY0) continue;
+
+    const rect = new cv.Rect(rectX0, rectY0, rectX1 - rectX0, rectY1 - rectY0);
     const roi = thresh.roi(rect);
 
     const contours = new cv.MatVector();
@@ -586,7 +633,7 @@ function detectarCantos(src) {
       if (area > maiorArea && area > areaMinima) {
         maiorArea = area;
         const br = cv.boundingRect(cnt);
-        melhor = { cx: x0 + br.x + br.width / 2, cy: y0 + br.y + br.height / 2 };
+        melhor = { cx: rectX0 + br.x + br.width / 2, cy: rectY0 + br.y + br.height / 2 };
       }
       cnt.delete();
     }
@@ -686,10 +733,10 @@ function detectarBolhas(warpedMat) {
   cv.medianBlur(gray, blur, 5);
 
   const blocos = {
-    esquerda: [150, 780],
-    direita: [950, 1580],
+    esquerda: [100, 820],   // questoes 01-05 (margem ampliada p/ fotos tiradas de mais longe)
+    direita: [870, 1650],   // questoes 06-10
   };
-  const y0 = 195, y1 = 800;
+  const y0 = 170, y1 = 830;
 
   const grade = {};
   const LETRAS = ['A', 'B', 'C', 'D', 'E'];

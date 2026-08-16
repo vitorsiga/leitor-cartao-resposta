@@ -333,6 +333,10 @@
         <span class="dot" id="dotBL"></span><span class="dot" id="dotBR"></span>
         <span id="textoCantos">Aponte para o cartão...</span>
       </div>
+      <label class="check" style="margin-top:4px;">
+        <input type="checkbox" id="checkAutoCaptura" checked>
+        Captura automática quando os 4 cantos forem detectados
+      </label>
       <button class="btn-principal" id="btnCapturar">Capturar foto</button>
       <p style="font-size:0.75rem;color:#8592ab;text-align:center;margin-top:8px;">
         Alinhe os 4 cantos do cartão dentro da guia amarela
@@ -488,6 +492,9 @@ function pararCamera() {
    ========================================================================= */
 let liveCheckInterval = null;
 let liveCheckRodando = false;
+let contagemEstavel = 0;
+let capturaAutomaticaDisparada = false;
+const LIMIAR_ESTABILIDADE = 3; // numero de checks consecutivos com 4/4 cantos antes de capturar (~2.1s)
 const liveCanvas = document.createElement('canvas');
 
 function iniciarVerificacaoAoVivo() {
@@ -498,6 +505,8 @@ function iniciarVerificacaoAoVivo() {
 function pararVerificacaoAoVivo() {
   if (liveCheckInterval) { clearInterval(liveCheckInterval); liveCheckInterval = null; }
   liveCheckRodando = false;
+  contagemEstavel = 0;
+  capturaAutomaticaDisparada = false;
 }
 
 function verificarCantosAoVivo() {
@@ -538,27 +547,53 @@ function atualizarIndicadorCantos(cantos) {
   const overlayEl = document.getElementById('guiaOverlay');
   if (!textoEl || !overlayEl) return;
 
+  const autoCapturaAtiva = document.getElementById('checkAutoCaptura')?.checked;
+
   if (count === 4) {
-    textoEl.textContent = '✅ Pronto! Todos os cantos visíveis';
     overlayEl.classList.add('tudo-ok');
-  } else if (count === 0) {
-    textoEl.textContent = 'Aponte para o cartão...';
-    overlayEl.classList.remove('tudo-ok');
+
+    if (capturaAutomaticaDisparada) {
+      textoEl.textContent = '📸 Capturando...';
+      return;
+    }
+
+    if (autoCapturaAtiva) {
+      contagemEstavel++;
+      const faltam = LIMIAR_ESTABILIDADE - contagemEstavel;
+      if (faltam > 0) {
+        textoEl.textContent = `✅ Mantenha parado... capturando em ${faltam}`;
+      } else {
+        textoEl.textContent = '📸 Capturando...';
+        capturaAutomaticaDisparada = true;
+        pararVerificacaoAoVivo();
+        setTimeout(() => dispararCapturaAutomatica(), 150);
+      }
+    } else {
+      textoEl.textContent = '✅ Pronto! Toque em "Capturar foto"';
+    }
   } else {
-    textoEl.textContent = `Ajuste o enquadramento (${count}/4 cantos visíveis)`;
+    contagemEstavel = 0;
     overlayEl.classList.remove('tudo-ok');
+    textoEl.textContent = count === 0
+      ? 'Aponte para o cartão...'
+      : `Ajuste o enquadramento (${count}/4 cantos visíveis)`;
   }
 }
 
-document.getElementById('btnCapturar').onclick = () => {
+function dispararCapturaAutomatica() {
   const w = video.videoWidth, h = video.videoHeight;
-  if (!w || !h) return;
+  if (!w || !h) { capturaAutomaticaDisparada = false; return; }
   canvasCapturado.width = w;
   canvasCapturado.height = h;
   const ctx = canvasCapturado.getContext('2d');
   ctx.drawImage(video, 0, 0, w, h);
   pararCamera();
   processarImagemCapturada();
+}
+
+document.getElementById('btnCapturar').onclick = () => {
+  capturaAutomaticaDisparada = true; // evita disparo duplo se a auto-captura tambem estiver de olho
+  dispararCapturaAutomatica();
 };
 
 /* =========================================================================

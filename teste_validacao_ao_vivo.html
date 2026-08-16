@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Teste de Performance — Validação ao Vivo</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy-1: #0b1f3a; --navy-2: #12315c; --yellow: #ffc72c; --blue: #2f7bff;
+    --ok: #1fb26b; --warn: #e0a300; --err: #e6473a; --paper: #f7f8fb;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:'Poppins',sans-serif; background:var(--paper); color:#16233d; }
+  header { background: linear-gradient(135deg, var(--navy-1), var(--navy-2)); color:white; padding:16px 18px; text-align:center; }
+  header h1 { font-size:1.05rem; margin:0 0 2px; font-weight:700; }
+  header p { margin:0; font-size:0.75rem; color:#b9c8e6; }
+  main { max-width: 480px; margin:0 auto; padding:14px 14px 50px; }
+  .card { background:white; border-radius:12px; padding:14px; margin-bottom:12px; border:1px solid #e8ecf3; }
+  .video-wrap { position:relative; }
+  video, canvas#overlay { width:100%; border-radius:10px; display:block; }
+  canvas#overlay { position:absolute; top:0; left:0; pointer-events:none; }
+  .controles { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+  .linha-controle { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .linha-controle label { font-size:0.78rem; font-weight:600; color:#4a5a78; }
+  select {
+    font-family:'Poppins',sans-serif; font-size:0.8rem; padding:6px 8px;
+    border-radius:8px; border:1px solid #d7dceb; background:white; color:#16233d;
+  }
+  .btn { padding:11px; border-radius:9px; border:none; font-family:'Poppins',sans-serif; font-weight:700; font-size:0.85rem; cursor:pointer; }
+  .btn-principal { background: linear-gradient(135deg, var(--yellow), #ffb200); color:#16233d; width:100%; margin-top:10px; }
+  .btn-parar { background:#eef1f7; color:#4a5a78; }
+  .hud { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:10px; }
+  .hud .item { background:#f0f3f9; border-radius:9px; padding:8px 10px; }
+  .hud .item .num { font-size:1.1rem; font-weight:800; color:var(--navy-2); }
+  .hud .item .txt { font-size:0.65rem; color:#6b7a99; font-weight:600; text-transform:uppercase; }
+  .status-linha { font-size:0.8rem; font-weight:600; color:#4a5a78; margin-top:8px; text-align:center; }
+  .json-box {
+    background:#0b1f3a; color:#9fd8b0; padding:12px; border-radius:9px;
+    font-family:monospace; font-size:0.72rem; line-height:1.45; white-space:pre; overflow-x:auto; margin:0;
+    max-height: 220px; overflow-y:auto;
+  }
+  .badge-modo { display:inline-block; padding:3px 9px; border-radius:6px; background:#eef2fb; color:#2f4570; font-size:0.7rem; font-weight:700; margin-left:6px; }
+  .aviso { background:#fff6e0; color:#8a6400; padding:10px 12px; border-radius:9px; font-size:0.78rem; line-height:1.4; margin-bottom:12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ Teste de Performance — Validação ao Vivo</h1>
+  <p>Roda o pipeline completo (cantos + QR + bolhas) direto no vídeo, com taxa configurável</p>
+</header>
+
+<main>
+  <div class="aviso">
+    ⚠️ Isto é um experimento de bancada, separado do leitor principal — serve só pra medir
+    desempenho real. Se o celular esquentar ou travar, reduza a frequência ou aumente o
+    intervalo abaixo.
+  </div>
+
+  <div class="card">
+    <div class="video-wrap">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="overlay"></canvas>
+    </div>
+
+    <div class="controles">
+      <div class="linha-controle">
+        <label>Frequência de processamento</label>
+        <select id="selectModo">
+          <option value="frame1">Todo quadro</option>
+          <option value="frame5">A cada 5 quadros</option>
+          <option value="frame10" selected>A cada 10 quadros</option>
+          <option value="tempo300">A cada 300ms</option>
+          <option value="tempo500">A cada 500ms</option>
+          <option value="tempo1000">A cada 1000ms</option>
+        </select>
+      </div>
+      <div class="linha-controle">
+        <label>Resolução de processamento</label>
+        <select id="selectResolucao">
+          <option value="0">Nativa da câmera</option>
+          <option value="1280">1280px de largura</option>
+          <option value="960" selected>960px de largura</option>
+          <option value="640">640px de largura</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="btn btn-principal" id="btnIniciar">▶️ Iniciar teste</button>
+    <button class="btn btn-parar" id="btnParar" style="display:none;width:100%;margin-top:8px;">⏹️ Parar</button>
+
+    <div class="status-linha" id="statusLinha">Aguardando início...</div>
+  </div>
+
+  <div class="card">
+    <div style="font-size:0.72rem;color:#6b7a99;font-weight:700;text-transform:uppercase;margin-bottom:8px;">
+      Performance <span class="badge-modo" id="badgeFonte">-</span>
+    </div>
+    <div class="hud">
+      <div class="item"><div class="num" id="hudFps">-</div><div class="txt">Quadros/s (câmera)</div></div>
+      <div class="item"><div class="num" id="hudProcessados">0</div><div class="txt">Processados</div></div>
+      <div class="item"><div class="num" id="hudUltimoMs">-</div><div class="txt">Última passada (ms)</div></div>
+      <div class="item"><div class="num" id="hudMediaMs">-</div><div class="txt">Média (ms, últimas 10)</div></div>
+      <div class="item"><div class="num" id="hudTaxaReal">-</div><div class="txt">Taxa real de processo (Hz)</div></div>
+      <div class="item"><div class="num" id="hudPulados">0</div><div class="txt">Pulados (ocupado)</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="font-size:0.72rem;color:#6b7a99;font-weight:700;text-transform:uppercase;margin-bottom:8px;">
+      Último resultado (ao vivo)
+    </div>
+    <pre class="json-box" id="jsonAoVivo">Aguardando...</pre>
+  </div>
+</main>
+
+<canvas id="workCanvas" style="display:none;"></canvas>
+
+<script async src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+
+<script>
+let cvReady = false;
+const OUT_W = 1700, OUT_H = 3000;
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const workCanvas = document.getElementById('workCanvas');
+let stream = null;
+let rodando = false;
+let processing = false;
+
+let frameCounter = 0;
+let processadosCount = 0;
+let puladosCount = 0;
+let ultimoProcessadoEm = 0;
+let temposRecentes = [];
+let fonteFrames = '-';
+
+let fpsFrameCount = 0;
+let fpsUltimoCheck = performance.now();
+
+function esperarCvPronto() {
+  return new Promise((resolve) => {
+    const check = () => {
+      if (typeof cv !== 'undefined') {
+        if (cv.Mat) { cvReady = true; resolve(); return; }
+        cv['onRuntimeInitialized'] = () => { cvReady = true; resolve(); };
+      }
+      if (!cvReady) setTimeout(check, 100);
+    };
+    check();
+  });
+}
+esperarCvPronto();
+
+async function iniciarCamera() {
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment', width: { ideal: 1080 }, height: { ideal: 1920 } }
+  });
+  video.srcObject = stream;
+  await new Promise(r => { video.onloadedmetadata = r; });
+  overlay.width = video.videoWidth;
+  overlay.height = video.videoHeight;
+}
+
+function pararCamera() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+}
+
+function iniciarLoop() {
+  frameCounter = 0; processadosCount = 0; puladosCount = 0; temposRecentes = [];
+  ultimoProcessadoEm = 0;
+  fpsFrameCount = 0; fpsUltimoCheck = performance.now();
+
+  if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+    fonteFrames = 'quadros reais';
+    video.requestVideoFrameCallback(onVideoFrame);
+  } else {
+    fonteFrames = 'fallback (tela)';
+    requestAnimationFrame(onVideoFrame);
+  }
+  document.getElementById('badgeFonte').textContent = fonteFrames;
+}
+
+function onVideoFrame(now) {
+  if (!rodando) return;
+
+  frameCounter++;
+  fpsFrameCount++;
+  if (now - fpsUltimoCheck >= 1000) {
+    document.getElementById('hudFps').textContent = fpsFrameCount.toFixed(0);
+    fpsFrameCount = 0;
+    fpsUltimoCheck = now;
+  }
+
+  const modo = document.getElementById('selectModo').value;
+  const deveProcessar = decidirProcessar(modo, now);
+
+  if (deveProcessar) {
+    if (processing) {
+      puladosCount++;
+      document.getElementById('hudPulados').textContent = puladosCount;
+    } else {
+      ultimoProcessadoEm = now;
+      processarFrameAoVivo();
+    }
+  }
+
+  if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+    video.requestVideoFrameCallback(onVideoFrame);
+  } else {
+    requestAnimationFrame(onVideoFrame);
+  }
+}
+
+function decidirProcessar(modo, now) {
+  switch (modo) {
+    case 'frame1': return true;
+    case 'frame5': return frameCounter % 5 === 0;
+    case 'frame10': return frameCounter % 10 === 0;
+    case 'tempo300': return now - ultimoProcessadoEm >= 300;
+    case 'tempo500': return now - ultimoProcessadoEm >= 500;
+    case 'tempo1000': return now - ultimoProcessadoEm >= 1000;
+    default: return frameCounter % 10 === 0;
+  }
+}
+
+async function processarFrameAoVivo() {
+  if (!cvReady || !video.videoWidth) return;
+  processing = true;
+  const t0 = performance.now();
+
+  try {
+    const resAlvo = parseInt(document.getElementById('selectResolucao').value, 10);
+    let w = video.videoWidth, h = video.videoHeight;
+    if (resAlvo > 0 && w > resAlvo) {
+      h = Math.round(h * (resAlvo / w));
+      w = resAlvo;
+    }
+    workCanvas.width = w;
+    workCanvas.height = h;
+    workCanvas.getContext('2d').drawImage(video, 0, 0, w, h);
+
+    const src = cv.imread(workCanvas);
+    const cantos = detectarCantosParcial(src);
+    const nomes = ['top_left', 'top_right', 'bottom_right', 'bottom_left'];
+    const todosCantos = nomes.every(n => cantos[n]);
+
+    let resultado = { cantos_detectados: Object.keys(cantos).length, completo: false };
+
+    if (todosCantos) {
+      const warped = corrigirPerspectiva(src, nomes.map(n => cantos[n]));
+      const qrTexto = lerQRCodeDoWarped(warped);
+      const grade = detectarBolhas(warped);
+      const totalQuestoes = Object.keys(grade).length;
+
+      if (totalQuestoes >= 1) {
+        const { respostas, ambiguas } = lerRespostas(warped, grade);
+        resultado = {
+          completo: true,
+          qrcode: qrTexto || null,
+          questoes_detectadas: totalQuestoes,
+          respostas: Object.keys(respostas).sort((a, b) => a - b).map(q => ({
+            questao: String(q).padStart(2, '0'),
+            resposta: respostas[q] || null,
+          })),
+        };
+      }
+      warped.delete();
+    }
+
+    src.delete();
+
+    processadosCount++;
+    const elapsed = performance.now() - t0;
+    temposRecentes.push(elapsed);
+    if (temposRecentes.length > 10) temposRecentes.shift();
+
+    atualizarHUD(elapsed);
+    document.getElementById('jsonAoVivo').textContent = JSON.stringify(resultado, null, 2);
+    document.getElementById('statusLinha').textContent =
+      resultado.completo
+        ? `✅ Leitura completa (${resultado.questoes_detectadas}/10 questões)`
+        : `Cantos visíveis: ${resultado.cantos_detectados}/4`;
+
+  } catch (e) {
+    console.error(e);
+    document.getElementById('statusLinha').textContent = '⚠️ Erro no processamento (veja console)';
+  } finally {
+    processing = false;
+  }
+}
+
+function atualizarHUD(elapsedMs) {
+  document.getElementById('hudProcessados').textContent = processadosCount;
+  document.getElementById('hudUltimoMs').textContent = elapsedMs.toFixed(0);
+  const media = temposRecentes.reduce((a, b) => a + b, 0) / temposRecentes.length;
+  document.getElementById('hudMediaMs').textContent = media.toFixed(0);
+  document.getElementById('hudTaxaReal').textContent = (1000 / media).toFixed(1);
+}
+
+function detectarPapel(src) {
+  const gray = new cv.Mat();
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  const threshPapel = new cv.Mat();
+  cv.threshold(gray, threshPapel, 150, 255, cv.THRESH_BINARY);
+  const kernel = cv.Mat.ones(25, 25, cv.CV_8U);
+  const fechado = new cv.Mat();
+  cv.morphologyEx(threshPapel, fechado, cv.MORPH_CLOSE, kernel);
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
+  cv.findContours(fechado, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  let maiorArea = 0, melhorRect = null;
+  for (let i = 0; i < contours.size(); i++) {
+    const cnt = contours.get(i);
+    const area = cv.contourArea(cnt);
+    if (area > maiorArea) { maiorArea = area; melhorRect = cv.boundingRect(cnt); }
+    cnt.delete();
+  }
+  gray.delete(); threshPapel.delete(); kernel.delete(); fechado.delete();
+  contours.delete(); hierarchy.delete();
+  return melhorRect;
+}
+
+const REGIOES_METRICA = {
+  top_left: (p) => p.x + p.y,
+  top_right: (p) => -p.x + p.y,
+  bottom_left: (p) => p.x - p.y,
+  bottom_right: (p) => -p.x - p.y,
+};
+
+function detectarCantosParcial(src) {
+  const papel = detectarPapel(src);
+  if (!papel) return {};
+  const { x: px, y: py, width: pw, height: ph } = papel;
+
+  const gray = new cv.Mat();
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  const thresh = new cv.Mat();
+  cv.threshold(gray, thresh, 70, 255, cv.THRESH_BINARY_INV);
+
+  const regioes = {
+    top_left: [0.00, 0.15, 0.00, 0.12],
+    top_right: [0.85, 1.00, 0.00, 0.12],
+    bottom_left: [0.00, 0.15, 0.75, 1.00],
+    bottom_right: [0.85, 1.00, 0.75, 1.00],
+  };
+  const areaMinima = 0.0004 * pw * ph;
+  const cantos = {};
+
+  for (const nome in regioes) {
+    const [x0f, x1f, y0f, y1f] = regioes[nome];
+    const x0 = px + Math.floor(x0f * pw), x1 = px + Math.floor(x1f * pw);
+    const y0 = py + Math.floor(y0f * ph), y1 = py + Math.floor(y1f * ph);
+    const rectX0 = Math.max(0, x0), rectY0 = Math.max(0, y0);
+    const rectX1 = Math.min(src.cols, x1), rectY1 = Math.min(src.rows, y1);
+    if (rectX1 <= rectX0 || rectY1 <= rectY0) continue;
+
+    const rect = new cv.Rect(rectX0, rectY0, rectX1 - rectX0, rectY1 - rectY0);
+    const roi = thresh.roi(rect);
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(roi, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+    let melhorPts = null, maiorArea = 0;
+    for (let i = 0; i < contours.size(); i++) {
+      const cnt = contours.get(i);
+      const area = cv.contourArea(cnt);
+      if (area > maiorArea && area > areaMinima) {
+        maiorArea = area;
+        melhorPts = Array.from(cnt.data32S);
+      }
+      cnt.delete();
+    }
+    if (melhorPts) {
+      const metrica = REGIOES_METRICA[nome];
+      const valores = [];
+      for (let k = 0; k < melhorPts.length; k += 2) valores.push(metrica({ x: melhorPts[k], y: melhorPts[k + 1] }));
+      const ordenados = [...valores].sort((a, b) => a - b);
+      const limiar = ordenados[Math.max(0, Math.floor(ordenados.length * 0.10) - 1)];
+      let somaX = 0, somaY = 0, count = 0;
+      for (let k = 0; k < melhorPts.length; k += 2) {
+        if (valores[k / 2] <= limiar) { somaX += melhorPts[k]; somaY += melhorPts[k + 1]; count++; }
+      }
+      cantos[nome] = { cx: rectX0 + somaX / count, cy: rectY0 + somaY / count };
+    }
+    roi.delete(); contours.delete(); hierarchy.delete();
+  }
+  gray.delete(); thresh.delete();
+  return cantos;
+}
+
+function corrigirPerspectiva(src, cantosOrdenados) {
+  const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+    cantosOrdenados[0].cx, cantosOrdenados[0].cy,
+    cantosOrdenados[1].cx, cantosOrdenados[1].cy,
+    cantosOrdenados[2].cx, cantosOrdenados[2].cy,
+    cantosOrdenados[3].cx, cantosOrdenados[3].cy,
+  ]);
+  const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, OUT_W, 0, OUT_W, OUT_H, 0, OUT_H]);
+  const M = cv.getPerspectiveTransform(srcTri, dstTri);
+  const dst = new cv.Mat();
+  cv.warpPerspective(src, dst, M, new cv.Size(OUT_W, OUT_H));
+  srcTri.delete(); dstTri.delete(); M.delete();
+  return dst;
+}
+
+function localizarRegiaoQR(warpedMat) {
+  const w = warpedMat.cols, h = warpedMat.rows;
+  const gray = new cv.Mat();
+  cv.cvtColor(warpedMat, gray, cv.COLOR_RGBA2GRAY);
+  const x0 = Math.floor(0.55 * w), x1 = w;
+  const y0 = 0, y1 = Math.floor(0.20 * h);
+  const rect = new cv.Rect(x0, y0, x1 - x0, y1 - y0);
+  const roi = gray.roi(rect);
+  const thresh = new cv.Mat();
+  cv.threshold(roi, thresh, 120, 255, cv.THRESH_BINARY_INV);
+  const kernel = cv.Mat.ones(15, 15, cv.CV_8U);
+  const dilatado = new cv.Mat();
+  cv.dilate(thresh, dilatado, kernel, new cv.Point(-1, -1), 2);
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
+  cv.findContours(dilatado, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  let melhor = null, maiorArea = 0;
+  for (let i = 0; i < contours.size(); i++) {
+    const cnt = contours.get(i);
+    const area = cv.contourArea(cnt);
+    const br = cv.boundingRect(cnt);
+    const aspect = br.height > 0 ? br.width / br.height : 0;
+    if (area > 3000 && aspect > 0.7 && aspect < 1.4 && area > maiorArea) {
+      maiorArea = area;
+      melhor = { x: x0 + br.x, y: y0 + br.y, w: br.width, h: br.height };
+    }
+    cnt.delete();
+  }
+  gray.delete(); roi.delete(); thresh.delete(); kernel.delete(); dilatado.delete();
+  contours.delete(); hierarchy.delete();
+  return melhor;
+}
+
+function lerQRCodeDoWarped(warpedMat) {
+  const regiao = localizarRegiaoQR(warpedMat);
+  if (!regiao) return null;
+  const margem = 40;
+  const x = Math.max(0, regiao.x - margem);
+  const y = Math.max(0, regiao.y - margem);
+  const w = Math.min(regiao.w + margem * 2, warpedMat.cols - x);
+  const h = Math.min(regiao.h + margem * 2, warpedMat.rows - y);
+  if (w <= 0 || h <= 0) return null;
+  let roiMat;
+  try {
+    roiMat = warpedMat.roi(new cv.Rect(x, y, w, h));
+  } catch (e) { return null; }
+  const tmp = document.createElement('canvas');
+  tmp.width = roiMat.cols; tmp.height = roiMat.rows;
+  cv.imshow(tmp, roiMat);
+  roiMat.delete();
+  const ctx = tmp.getContext('2d');
+  const imgData = ctx.getImageData(0, 0, tmp.width, tmp.height);
+  const resultado = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'attemptBoth' });
+  return resultado ? resultado.data : null;
+}
+
+const Y_REFERENCIA = { esquerda: [426, 513, 600, 692, 776], direita: [446, 531, 619, 705, 791] };
+const NUMEROS_QUESTAO = { esquerda: [1, 2, 3, 4, 5], direita: [6, 7, 8, 9, 10] };
+
+function atribuirQuestoes(linhasValidas, yReferencia) {
+  if (linhasValidas.length === 0) return {};
+  const comY = linhasValidas.map(linha => ({ linha, y: linha.reduce((s, p) => s + p.y, 0) / linha.length }));
+  comY.sort((a, b) => a.y - b.y);
+  const ys = comY.map(o => o.y);
+  const k = ys.length;
+  if (k === 5) { const r = {}; for (let i = 0; i < 5; i++) r[i] = comY[i].linha; return r; }
+  if (k === 1) {
+    let idx = 0, menorDist = Infinity;
+    for (let i = 0; i < yReferencia.length; i++) { const d = Math.abs(ys[0] - yReferencia[i]); if (d < menorDist) { menorDist = d; idx = i; } }
+    return { [idx]: comY[0].linha };
+  }
+  const gaps = [];
+  for (let i = 1; i < ys.length; i++) gaps.push(ys[i] - ys[i - 1]);
+  gaps.sort((a, b) => a - b);
+  const espacamentoMediano = gaps[Math.floor(gaps.length / 2)];
+  let melhorErro = Infinity, melhorSlots = null;
+  for (let slotInicial = 0; slotInicial <= 5 - k; slotInicial++) {
+    const slots = [slotInicial];
+    let valido = true;
+    for (let i = 1; i < ys.length; i++) {
+      const passos = Math.max(1, Math.round((ys[i] - ys[i - 1]) / espacamentoMediano));
+      const proximo = slots[slots.length - 1] + passos;
+      if (proximo > 4) { valido = false; break; }
+      slots.push(proximo);
+    }
+    if (!valido) continue;
+    const erro = Math.abs(ys[0] - yReferencia[slots[0]]);
+    if (erro < melhorErro) { melhorErro = erro; melhorSlots = slots; }
+  }
+  if (!melhorSlots) return {};
+  const r = {};
+  for (let i = 0; i < k; i++) r[melhorSlots[i]] = comY[i].linha;
+  return r;
+}
+
+function detectarBolhas(warpedMat) {
+  const gray = new cv.Mat();
+  cv.cvtColor(warpedMat, gray, cv.COLOR_RGBA2GRAY);
+  const regiaoQR = localizarRegiaoQR(warpedMat);
+  if (regiaoQR) {
+    const margem = 8;
+    const qx = Math.max(0, regiaoQR.x - margem), qy = Math.max(0, regiaoQR.y - margem);
+    const qw = Math.min(regiaoQR.w + margem * 2, gray.cols - qx);
+    const qh = Math.min(regiaoQR.h + margem * 2, gray.rows - qy);
+    if (qw > 0 && qh > 0) {
+      const qrRoi = gray.roi(new cv.Rect(qx, qy, qw, qh));
+      qrRoi.setTo(new cv.Scalar(255));
+      qrRoi.delete();
+    }
+  }
+  const blur = new cv.Mat();
+  cv.medianBlur(gray, blur, 5);
+  const blocos = { esquerda: [100, 820], direita: [870, 1650] };
+  const y0 = 170, y1 = 830;
+  const grade = {};
+  const LETRAS = ['A', 'B', 'C', 'D', 'E'];
+
+  for (const nome in blocos) {
+    const [x0, x1] = blocos[nome];
+    const rect = new cv.Rect(x0, y0, x1 - x0, y1 - y0);
+    const roi = blur.roi(rect);
+    const circles = new cv.Mat();
+    cv.HoughCircles(roi, circles, cv.HOUGH_GRADIENT, 1, 40, 60, 18, 18, 35);
+    let pontos = [];
+    for (let i = 0; i < circles.cols; i++) {
+      pontos.push({ x: circles.data32F[i * 3] + x0, y: circles.data32F[i * 3 + 1] + y0, r: circles.data32F[i * 3 + 2] });
+    }
+    circles.delete(); roi.delete();
+    pontos.sort((a, b) => a.y - b.y);
+    const linhas = [];
+    const tolY = 45;
+    for (const p of pontos) {
+      let colocado = false;
+      for (const linha of linhas) {
+        const mediaY = linha.reduce((s, q) => s + q.y, 0) / linha.length;
+        if (Math.abs(mediaY - p.y) < tolY) { linha.push(p); colocado = true; break; }
+      }
+      if (!colocado) linhas.push([p]);
+    }
+    const linhasValidas = linhas.filter(l => l.length === 5);
+    for (const linha of linhasValidas) linha.sort((a, b) => a.x - b.x);
+    const atribuicao = atribuirQuestoes(linhasValidas, Y_REFERENCIA[nome]);
+    const numQuestoes = NUMEROS_QUESTAO[nome];
+    for (const idx in atribuicao) {
+      const q = numQuestoes[idx];
+      grade[q] = atribuicao[idx].map((p, i) => ({ letra: LETRAS[i], x: p.x, y: p.y, r: p.r }));
+    }
+  }
+  gray.delete(); blur.delete();
+  return grade;
+}
+
+function lerRespostas(warpedMat, grade) {
+  const gray = new cv.Mat();
+  cv.cvtColor(warpedMat, gray, cv.COLOR_RGBA2GRAY);
+  const respostas = {};
+  const ambiguas = new Set();
+  const LIMIAR_MARCACAO = 0.28;
+  const MARGEM_AMBIGUA = 0.12;
+  for (const q in grade) {
+    const bolhas = grade[q];
+    const scores = {};
+    for (const b of bolhas) {
+      const raioInterno = Math.round(b.r * 0.65);
+      const mask = cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8UC1);
+      cv.circle(mask, new cv.Point(Math.round(b.x), Math.round(b.y)), raioInterno, new cv.Scalar(255), -1);
+      const mean = cv.mean(gray, mask);
+      mask.delete();
+      scores[b.letra] = 1 - (mean[0] / 255);
+    }
+    const letras = Object.keys(scores);
+    letras.sort((a, b) => scores[b] - scores[a]);
+    const maior = scores[letras[0]];
+    const segunda = scores[letras[1]] || 0;
+    if (maior < LIMIAR_MARCACAO) { respostas[q] = null; }
+    else {
+      respostas[q] = letras[0];
+      if ((maior - segunda) < MARGEM_AMBIGUA) ambiguas.add(q);
+    }
+  }
+  gray.delete();
+  return { respostas, ambiguas };
+}
+
+document.getElementById('btnIniciar').onclick = async () => {
+  document.getElementById('statusLinha').textContent = 'Iniciando câmera...';
+  await iniciarCamera();
+  rodando = true;
+  document.getElementById('btnIniciar').style.display = 'none';
+  document.getElementById('btnParar').style.display = 'block';
+  document.getElementById('statusLinha').textContent = 'Rodando...';
+  iniciarLoop();
+};
+
+document.getElementById('btnParar').onclick = () => {
+  rodando = false;
+  pararCamera();
+  document.getElementById('btnIniciar').style.display = 'block';
+  document.getElementById('btnParar').style.display = 'none';
+  document.getElementById('statusLinha').textContent = 'Parado.';
+};
+</script>
+
+</body>
+</html>

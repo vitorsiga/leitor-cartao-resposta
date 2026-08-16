@@ -522,14 +522,9 @@ async function processarImagemCapturada() {
     }
 
     const warped = corrigirPerspectiva(src, cantos);
-
-    // tenta ler o QR primeiro na foto original (resolucao maxima),
-    // e so recorre a retificada se falhar
-    let qrTexto = lerQRCodeDeCanvas(canvasCapturado);
-    if (!qrTexto) {
-      qrTexto = lerQRCodeDeMat(warped);
-    }
     src.delete();
+
+    const qrTexto = lerQRCodeDoWarped(warped);
 
     const grade = detectarBolhas(warped);
     const totalQuestoes = Object.keys(grade).length;
@@ -630,22 +625,26 @@ function corrigirPerspectiva(src, cantos) {
 
 /* =========================================================================
    3) LEITURA DO QR CODE (via jsQR)
-   Le a partir da foto ORIGINAL (resolucao maxima da camera/upload), nao da
-   imagem retificada -- o warp para o tamanho canonico (1700px) pode borrar
-   os modulos finos do QR mesmo quando as bolhas (bem maiores) continuam
-   legiveis. Se falhar na original, tenta na retificada como fallback.
+   IMPORTANTE: jsQR (ao contrario do zbar/zxing) tem dificuldade para
+   LOCALIZAR um QR pequeno dentro de uma foto grande -- funciona de forma
+   confiavel so quando recebe um recorte justo em torno do QR. Por isso,
+   em vez de rodar na foto inteira, recortamos a regiao conhecida do QR
+   na imagem ja retificada (posicao fixa, por causa do layout do cartao).
    ========================================================================= */
-function lerQRCodeDeMat(mat) {
-  const tmpCanvas = document.createElement('canvas');
-  tmpCanvas.width = mat.cols;
-  tmpCanvas.height = mat.rows;
-  cv.imshow(tmpCanvas, mat);
-  return lerQRCodeDeCanvas(tmpCanvas);
-}
+const QR_REGION = { x: 1300, y: 0, w: 420, h: 450 }; // regiao no espaco canonico 1700x3000
 
-function lerQRCodeDeCanvas(canvas) {
-  const ctx = canvas.getContext('2d');
-  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+function lerQRCodeDoWarped(warpedMat) {
+  const rect = new cv.Rect(QR_REGION.x, QR_REGION.y, QR_REGION.w, QR_REGION.h);
+  const roiMat = warpedMat.roi(rect);
+
+  const tmpCanvas = document.createElement('canvas');
+  tmpCanvas.width = roiMat.cols;
+  tmpCanvas.height = roiMat.rows;
+  cv.imshow(tmpCanvas, roiMat);
+  roiMat.delete();
+
+  const ctx = tmpCanvas.getContext('2d');
+  const imgData = ctx.getImageData(0, 0, tmpCanvas.width, tmpCanvas.height);
   const resultado = jsQR(imgData.data, imgData.width, imgData.height, {
     inversionAttempts: 'attemptBoth',
   });

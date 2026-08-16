@@ -543,7 +543,8 @@ async function processarImagemCapturada() {
 
   } catch (err) {
     console.error(err);
-    mostrarErro('Erro inesperado ao processar a imagem: ' + err.message);
+    const msg = (err && err.message) ? err.message : (typeof err === 'string' ? err : `código de erro interno do OpenCV: ${err}`);
+    mostrarErro('Erro inesperado ao processar a imagem: ' + msg + '<br><br>Se possível, me envie a foto que causou isso para eu investigar.');
   }
 }
 
@@ -631,11 +632,29 @@ function corrigirPerspectiva(src, cantos) {
    em vez de rodar na foto inteira, recortamos a regiao conhecida do QR
    na imagem ja retificada (posicao fixa, por causa do layout do cartao).
    ========================================================================= */
-const QR_REGION = { x: 1300, y: 0, w: 420, h: 450 }; // regiao no espaco canonico 1700x3000
+const QR_REGION = { x: 1320, y: 10, w: 360, h: 400 }; // regiao no espaco canonico 1700x3000 (dentro dos limites: 1320+360=1680 <= 1700)
 
 function lerQRCodeDoWarped(warpedMat) {
-  const rect = new cv.Rect(QR_REGION.x, QR_REGION.y, QR_REGION.w, QR_REGION.h);
-  const roiMat = warpedMat.roi(rect);
+  // blindagem: garante que o retangulo nunca ultrapasse os limites da imagem,
+  // mesmo que os valores de QR_REGION sejam ajustados no futuro
+  const x = Math.max(0, QR_REGION.x);
+  const y = Math.max(0, QR_REGION.y);
+  const w = Math.min(QR_REGION.w, warpedMat.cols - x);
+  const h = Math.min(QR_REGION.h, warpedMat.rows - y);
+
+  if (w <= 0 || h <= 0) {
+    console.error('Regiao do QR invalida:', { x, y, w, h, cols: warpedMat.cols, rows: warpedMat.rows });
+    return null;
+  }
+
+  let roiMat;
+  try {
+    const rect = new cv.Rect(x, y, w, h);
+    roiMat = warpedMat.roi(rect);
+  } catch (e) {
+    console.error('Erro ao recortar regiao do QR:', e);
+    return null;
+  }
 
   const tmpCanvas = document.createElement('canvas');
   tmpCanvas.width = roiMat.cols;

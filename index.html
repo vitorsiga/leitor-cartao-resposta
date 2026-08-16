@@ -299,6 +299,12 @@
     </label>
   </div>
 
+  <div id="statusCv" class="card" style="padding:10px 14px;">
+    <div class="status" id="statusCvTexto" style="background:transparent;padding:0;">
+      <div class="spinner"></div>Carregando mecanismo de visão computacional...
+    </div>
+  </div>
+
   <div id="areaResultado"></div>
 
   <p class="rodape-teste">
@@ -310,8 +316,8 @@
 
 <canvas id="canvasCapturado" class="hidden"></canvas>
 
-<!-- OpenCV.js (WebAssembly) -->
-<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+<!-- OpenCV.js (WebAssembly) — build via jsDelivr (CORS correto para uso externo) -->
+<script async src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js"></script>
 <!-- jsQR para leitura de QR code -->
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
@@ -332,16 +338,46 @@ const areaResultado = document.getElementById('areaResultado');
 
 /* =========================================================================
    OPENCV.JS — AGUARDA CARREGAR
+   (o script pode existir como objeto global antes do WASM terminar de
+   compilar — por isso precisamos tanto checar cv.Mat quanto registrar o
+   callback onRuntimeInitialized assim que o objeto `cv` aparecer, sem
+   esperar cv.Mat existir antes de registrar o callback)
    ========================================================================= */
-function onOpenCvReady() {
-  cvReady = true;
+let cvLoadError = false;
+function esperarCvPronto() {
+  return new Promise((resolve) => {
+    const inicioEspera = Date.now();
+    const check = () => {
+      if (typeof cv !== 'undefined') {
+        if (cv.Mat) {
+          cvReady = true;
+          resolve();
+        } else if (typeof cv.onRuntimeInitialized !== 'undefined' || typeof cv.then !== 'function') {
+          cv['onRuntimeInitialized'] = () => { cvReady = true; resolve(); };
+        }
+      }
+      if (!cvReady) {
+        if (Date.now() - inicioEspera > 25000) {
+          cvLoadError = true;
+          resolve(); // libera a espera para mostrarmos um erro em vez de travar para sempre
+          return;
+        }
+        setTimeout(check, 100);
+      }
+    };
+    check();
+  });
 }
-const checkCvInterval = setInterval(() => {
-  if (typeof cv !== 'undefined' && cv.Mat) {
-    cv['onRuntimeInitialized'] = onOpenCvReady;
-    clearInterval(checkCvInterval);
+// dispara o carregamento em segundo plano assim que a pagina abre
+const promessaCv = esperarCvPronto().then(() => {
+  const el = document.getElementById('statusCv');
+  if (!el) return;
+  if (cvReady) {
+    el.innerHTML = '<div class="status" style="background:#e4f8ee;color:#1fb26b;padding:0;">✅ Mecanismo de visão computacional pronto</div>';
+  } else {
+    el.innerHTML = '<div class="status" style="background:#fcece9;color:#e6473a;padding:0;">⚠️ Falha ao carregar — verifique sua conexão e recarregue a página</div>';
   }
-}, 100);
+});
 
 /* =========================================================================
    TABS: CÂMERA x ARQUIVO
@@ -434,7 +470,16 @@ function mostrarErro(msg) {
 async function processarImagemCapturada() {
   if (!cvReady) {
     mostrarStatus('Carregando o mecanismo de visão computacional (OpenCV.js)... aguarde alguns segundos.');
-    await esperarCvPronto();
+    await promessaCv;
+  }
+  if (cvLoadError || !cvReady) {
+    mostrarErro(
+      '⚠️ O OpenCV.js não terminou de carregar em 25 segundos.<br><br>' +
+      'Isso geralmente é falta de conexão de internet estável, ou o navegador bloqueou o carregamento. ' +
+      'Verifique sua conexão e toque em "Nova leitura" para tentar de novo. ' +
+      'Se persistir, abra o console do navegador (menu do navegador → "Desenvolvedor"/"Inspecionar") e me envie a mensagem de erro que aparecer lá.'
+    );
+    return;
   }
   mostrarStatus('Processando cartão-resposta...');
 
@@ -477,14 +522,6 @@ async function processarImagemCapturada() {
     console.error(err);
     mostrarErro('Erro inesperado ao processar a imagem: ' + err.message);
   }
-}
-
-function esperarCvPronto() {
-  return new Promise(resolve => {
-    const iv = setInterval(() => {
-      if (cvReady) { clearInterval(iv); resolve(); }
-    }, 100);
-  });
 }
 
 /* =========================================================================

@@ -102,7 +102,32 @@
     margin: 8%;
     border-radius: 10px;
     pointer-events: none;
+    transition: border-color 0.2s ease;
   }
+  .guia-overlay.tudo-ok {
+    border-color: rgba(31,178,107,0.9);
+    border-style: solid;
+  }
+  .status-cantos {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    margin-top: 8px;
+    background: #f0f3f9;
+    border-radius: 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #4a5a78;
+  }
+  .status-cantos .dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: #d7dceb;
+    flex-shrink: 0;
+    transition: background 0.2s ease;
+  }
+  .status-cantos .dot.ok { background: #1fb26b; }
   .btn-principal {
     width: 100%;
     padding: 15px;
@@ -301,7 +326,12 @@
     <div id="painelCamera">
       <div class="video-wrap">
         <video id="video" autoplay playsinline muted></video>
-        <div class="guia-overlay"></div>
+        <div class="guia-overlay" id="guiaOverlay"></div>
+      </div>
+      <div class="status-cantos" id="statusCantos">
+        <span class="dot" id="dotTL"></span><span class="dot" id="dotTR"></span>
+        <span class="dot" id="dotBL"></span><span class="dot" id="dotBR"></span>
+        <span id="textoCantos">Aponte para o cartão...</span>
       </div>
       <button class="btn-principal" id="btnCapturar">Capturar foto</button>
       <p style="font-size:0.75rem;color:#8592ab;text-align:center;margin-top:8px;">
@@ -436,6 +466,7 @@ async function iniciarCamera() {
       video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
     });
     video.srcObject = stream;
+    iniciarVerificacaoAoVivo();
   } catch (err) {
     areaResultado.innerHTML = `<div class="card"><div class="erro-box">
       Não foi possível acessar a câmera: ${err.message}.<br>
@@ -448,6 +479,74 @@ function pararCamera() {
   if (stream) {
     stream.getTracks().forEach(t => t.stop());
     stream = null;
+  }
+  pararVerificacaoAoVivo();
+}
+
+/* =========================================================================
+   VERIFICAÇÃO AO VIVO DOS 4 CANTOS (feedback visual antes de capturar)
+   ========================================================================= */
+let liveCheckInterval = null;
+let liveCheckRodando = false;
+const liveCanvas = document.createElement('canvas');
+
+function iniciarVerificacaoAoVivo() {
+  pararVerificacaoAoVivo();
+  liveCheckInterval = setInterval(verificarCantosAoVivo, 700);
+}
+
+function pararVerificacaoAoVivo() {
+  if (liveCheckInterval) { clearInterval(liveCheckInterval); liveCheckInterval = null; }
+  liveCheckRodando = false;
+}
+
+function verificarCantosAoVivo() {
+  if (!cvReady || !video.videoWidth || liveCheckRodando) return;
+  liveCheckRodando = true;
+
+  try {
+    const escala = 480 / video.videoWidth;
+    liveCanvas.width = 480;
+    liveCanvas.height = Math.round(video.videoHeight * escala);
+    const ctx = liveCanvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, liveCanvas.width, liveCanvas.height);
+
+    const src = cv.imread(liveCanvas);
+    const cantosParciais = detectarCantosParcial(src);
+    src.delete();
+
+    atualizarIndicadorCantos(cantosParciais);
+  } catch (e) {
+    // falha silenciosa no check ao vivo -- nao interrompe a experiencia
+    console.warn('Verificacao ao vivo falhou:', e);
+  } finally {
+    liveCheckRodando = false;
+  }
+}
+
+function atualizarIndicadorCantos(cantos) {
+  const dots = { top_left: 'dotTL', top_right: 'dotTR', bottom_left: 'dotBL', bottom_right: 'dotBR' };
+  let count = 0;
+  for (const nome in dots) {
+    const encontrado = !!cantos[nome];
+    if (encontrado) count++;
+    const el = document.getElementById(dots[nome]);
+    if (el) el.classList.toggle('ok', encontrado);
+  }
+
+  const textoEl = document.getElementById('textoCantos');
+  const overlayEl = document.getElementById('guiaOverlay');
+  if (!textoEl || !overlayEl) return;
+
+  if (count === 4) {
+    textoEl.textContent = '✅ Pronto! Todos os cantos visíveis';
+    overlayEl.classList.add('tudo-ok');
+  } else if (count === 0) {
+    textoEl.textContent = 'Aponte para o cartão...';
+    overlayEl.classList.remove('tudo-ok');
+  } else {
+    textoEl.textContent = `Ajuste o enquadramento (${count}/4 cantos visíveis)`;
+    overlayEl.classList.remove('tudo-ok');
   }
 }
 
@@ -590,9 +689,9 @@ function detectarPapel(src) {
   return melhorRect; // {x, y, width, height} ou null
 }
 
-function detectarCantos(src) {
+function detectarCantosParcial(src) {
   const papel = detectarPapel(src);
-  if (!papel) return null;
+  if (!papel) return {};
   const { x: px, y: py, width: pw, height: ph } = papel;
 
   const gray = new cv.Mat();
@@ -605,6 +704,14 @@ function detectarCantos(src) {
     top_right:    [0.85, 1.00, 0.00, 0.12],
     bottom_left:  [0.00, 0.15, 0.75, 1.00],
     bottom_right: [0.85, 1.00, 0.75, 1.00],
+  };
+  // para cada canto, a direcao do ponto extremo que representa a ponta real
+  // do canto do papel (nao o centro do blob do marcador)
+  const REGIOES_METRICA = {
+    top_left:     (p) => p.x + p.y,
+    top_right:    (p) => -p.x + p.y,
+    bottom_left:  (p) => p.x - p.y,
+    bottom_right: (p) => -p.x - p.y,
   };
 
   // regioes agora relativas ao retangulo do PAPEL, nao a foto inteira
@@ -626,14 +733,24 @@ function detectarCantos(src) {
     const hierarchy = new cv.Mat();
     cv.findContours(roi, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-    let maiorArea = 0, melhor = null;
+    let melhor = null, maiorArea = 0;
     for (let i = 0; i < contours.size(); i++) {
       const cnt = contours.get(i);
       const area = cv.contourArea(cnt);
       if (area > maiorArea && area > areaMinima) {
         maiorArea = area;
-        const br = cv.boundingRect(cnt);
-        melhor = { cx: rectX0 + br.x + br.width / 2, cy: rectY0 + br.y + br.height / 2 };
+        // acha o ponto extremo do contorno na direcao da ponta real do
+        // canto do papel (mais robusto que o centroide do blob inteiro,
+        // que se desloca quando parte do marcador fica em sombra)
+        const pts = cnt.data32S; // [x0,y0,x1,y1,...]
+        const metrica = REGIOES_METRICA[nome];
+        let melhorX = pts[0], melhorY = pts[1];
+        let melhorValor = metrica({ x: melhorX, y: melhorY });
+        for (let k = 0; k < pts.length; k += 2) {
+          const v = metrica({ x: pts[k], y: pts[k + 1] });
+          if (v < melhorValor) { melhorValor = v; melhorX = pts[k]; melhorY = pts[k + 1]; }
+        }
+        melhor = { cx: rectX0 + melhorX, cy: rectY0 + melhorY };
       }
       cnt.delete();
     }
@@ -644,6 +761,11 @@ function detectarCantos(src) {
 
   gray.delete(); thresh.delete();
 
+  return cantos; // objeto com 0 a 4 chaves (top_left, top_right, bottom_left, bottom_right)
+}
+
+function detectarCantos(src) {
+  const cantos = detectarCantosParcial(src);
   const nomes = ['top_left', 'top_right', 'bottom_right', 'bottom_left'];
   if (nomes.every(n => cantos[n])) {
     return nomes.map(n => cantos[n]);
@@ -763,7 +885,22 @@ function lerQRCodeDoWarped(warpedMat) {
 
 /* =========================================================================
    4) DETECÇÃO DAS BOLHAS
+   Duas melhorias: (a) tolerancia de agrupamento em linha mais generosa,
+   para tolerar inclinacao residual apos a retificacao; (b) cada linha
+   encontrada e atribuida ao numero de questao mais proximo por posicao Y
+   esperada (calibrada), em vez de assumir que a 1a linha encontrada e
+   sempre a questao 1 -- isso evita desalinhar o gabarito inteiro quando
+   alguma linha do meio falha ao ser detectada.
    ========================================================================= */
+const Y_REFERENCIA = {
+  esquerda: [426, 513, 600, 692, 776],
+  direita: [446, 531, 619, 705, 791],
+};
+const NUMEROS_QUESTAO = {
+  esquerda: [1, 2, 3, 4, 5],
+  direita: [6, 7, 8, 9, 10],
+};
+
 function detectarBolhas(warpedMat) {
   const gray = new cv.Mat();
   cv.cvtColor(warpedMat, gray, cv.COLOR_RGBA2GRAY);
@@ -777,8 +914,8 @@ function detectarBolhas(warpedMat) {
   cv.medianBlur(gray, blur, 5);
 
   const blocos = {
-    esquerda: [100, 820],   // questoes 01-05 (margem ampliada p/ fotos tiradas de mais longe)
-    direita: [870, 1650],   // questoes 06-10
+    esquerda: [100, 820],
+    direita: [870, 1650],
   };
   const y0 = 170, y1 = 830;
 
@@ -802,9 +939,10 @@ function detectarBolhas(warpedMat) {
     }
     circles.delete(); roi.delete();
 
+    // agrupa em linhas com tolerancia ampliada (tolera inclinacao residual)
     pontos.sort((a, b) => a.y - b.y);
     const linhas = [];
-    const tolY = 20;
+    const tolY = 45;
     for (const p of pontos) {
       let colocado = false;
       for (const linha of linhas) {
@@ -813,17 +951,29 @@ function detectarBolhas(warpedMat) {
       }
       if (!colocado) linhas.push([p]);
     }
-    const linhasValidas = linhas.filter(l => l.length === 5)
-      .sort((a, b) => (a.reduce((s,q)=>s+q.y,0)/5) - (b.reduce((s,q)=>s+q.y,0)/5))
-      .slice(0, 5);
 
+    const linhasValidas = linhas.filter(l => l.length === 5);
     for (const linha of linhasValidas) linha.sort((a, b) => a.x - b.x);
 
-    const offset = (nome === 'esquerda') ? 1 : 6;
-    linhasValidas.forEach((linha, i) => {
-      const q = offset + i;
+    // atribui cada linha ao numero de questao mais proximo por posicao Y
+    // esperada -- nao por ordem de deteccao
+    const yRef = Y_REFERENCIA[nome];
+    const numQuestoes = NUMEROS_QUESTAO[nome];
+    const usados = new Set();
+
+    for (const linha of linhasValidas) {
+      const mediaY = linha.reduce((s, p) => s + p.y, 0) / linha.length;
+      let melhorIdx = -1, menorDist = Infinity;
+      for (let i = 0; i < yRef.length; i++) {
+        if (usados.has(i)) continue;
+        const dist = Math.abs(mediaY - yRef[i]);
+        if (dist < menorDist) { menorDist = dist; melhorIdx = i; }
+      }
+      if (melhorIdx === -1 || menorDist > 60) continue; // muito longe de qualquer posicao esperada
+      usados.add(melhorIdx);
+      const q = numQuestoes[melhorIdx];
       grade[q] = linha.map((p, idx) => ({ letra: LETRAS[idx], x: p.x, y: p.y, r: p.r }));
-    });
+    }
   }
 
   gray.delete(); blur.delete();

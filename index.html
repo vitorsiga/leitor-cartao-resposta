@@ -672,27 +672,71 @@ function corrigirPerspectiva(src, cantos) {
 }
 
 /* =========================================================================
-   3) LEITURA DO QR CODE (via jsQR)
-   IMPORTANTE: jsQR (ao contrario do zbar/zxing) tem dificuldade para
-   LOCALIZAR um QR pequeno dentro de uma foto grande -- funciona de forma
-   confiavel so quando recebe um recorte justo em torno do QR. Por isso,
-   em vez de rodar na foto inteira, recortamos a regiao conhecida do QR
-   na imagem ja retificada (posicao fixa, por causa do layout do cartao).
+   3) LEITURA DO QR CODE
+   Duas etapas independentes, como sugerido: o OpenCV so LOCALIZA a regiao
+   do QR (nunca decodifica nada), e o jsQR e o unico responsavel por
+   decodificar. A localizacao e dinamica (nao usa posicao fixa), porque a
+   posicao exata do QR varia um pouco de foto pra foto dependendo da
+   precisao da retificacao dos 4 cantos.
    ========================================================================= */
-const QR_REGION = { x: 1320, y: 10, w: 360, h: 400 }; // regiao no espaco canonico 1700x3000 (dentro dos limites: 1320+360=1680 <= 1700)
+function localizarRegiaoQR(warpedMat) {
+  const w = warpedMat.cols, h = warpedMat.rows;
+  const gray = new cv.Mat();
+  cv.cvtColor(warpedMat, gray, cv.COLOR_RGBA2GRAY);
+
+  // regiao ampla onde o QR pode estar (topo direito, com folga generosa)
+  const x0 = Math.floor(0.55 * w), x1 = w;
+  const y0 = 0, y1 = Math.floor(0.20 * h);
+  const rect = new cv.Rect(x0, y0, x1 - x0, y1 - y0);
+  const roi = gray.roi(rect);
+
+  const thresh = new cv.Mat();
+  cv.threshold(roi, thresh, 120, 255, cv.THRESH_BINARY_INV);
+
+  // dilatacao forte: funde os modulos do QR num blob solido, mas nao
+  // funde as linhas finas de texto do cabecalho do cartao
+  const kernel = cv.Mat.ones(15, 15, cv.CV_8U);
+  const dilatado = new cv.Mat();
+  cv.dilate(thresh, dilatado, kernel, new cv.Point(-1, -1), 2);
+
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
+  cv.findContours(dilatado, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  let melhor = null, maiorArea = 0;
+  for (let i = 0; i < contours.size(); i++) {
+    const cnt = contours.get(i);
+    const area = cv.contourArea(cnt);
+    const br = cv.boundingRect(cnt);
+    const aspect = br.height > 0 ? br.width / br.height : 0;
+    // o QR deve ser um blob razoavelmente grande E de proporcao ~quadrada
+    if (area > 3000 && aspect > 0.7 && aspect < 1.4 && area > maiorArea) {
+      maiorArea = area;
+      melhor = { x: x0 + br.x, y: y0 + br.y, w: br.width, h: br.height };
+    }
+    cnt.delete();
+  }
+
+  gray.delete(); roi.delete(); thresh.delete(); kernel.delete();
+  dilatado.delete(); contours.delete(); hierarchy.delete();
+
+  return melhor;
+}
 
 function lerQRCodeDoWarped(warpedMat) {
-  // blindagem: garante que o retangulo nunca ultrapasse os limites da imagem,
-  // mesmo que os valores de QR_REGION sejam ajustados no futuro
-  const x = Math.max(0, QR_REGION.x);
-  const y = Math.max(0, QR_REGION.y);
-  const w = Math.min(QR_REGION.w, warpedMat.cols - x);
-  const h = Math.min(QR_REGION.h, warpedMat.rows - y);
-
-  if (w <= 0 || h <= 0) {
-    console.error('Regiao do QR invalida:', { x, y, w, h, cols: warpedMat.cols, rows: warpedMat.rows });
+  const regiao = localizarRegiaoQR(warpedMat);
+  if (!regiao) {
+    console.warn('Nao foi possivel localizar a regiao do QR code');
     return null;
   }
+
+  // acrescenta margem de seguranca ao redor da regiao localizada
+  const margem = 40;
+  const x = Math.max(0, regiao.x - margem);
+  const y = Math.max(0, regiao.y - margem);
+  const w = Math.min(regiao.w + margem * 2, warpedMat.cols - x);
+  const h = Math.min(regiao.h + margem * 2, warpedMat.rows - y);
+  if (w <= 0 || h <= 0) return null;
 
   let roiMat;
   try {

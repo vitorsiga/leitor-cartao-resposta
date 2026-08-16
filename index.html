@@ -232,6 +232,29 @@
     border: 1px solid #e8ecf3;
     display: block;
   }
+  .json-box {
+    background: #0b1f3a;
+    color: #9fd8b0;
+    padding: 14px;
+    border-radius: 10px;
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-size: 0.76rem;
+    line-height: 1.5;
+    overflow-x: auto;
+    white-space: pre;
+    margin: 0;
+  }
+  .btn-copiar {
+    padding: 6px 12px;
+    border-radius: 7px;
+    border: none;
+    background: var(--blue);
+    color: white;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600;
+    font-size: 0.72rem;
+    cursor: pointer;
+  }
   .erro-box {
     background: #fcece9;
     color: #b8291c;
@@ -780,6 +803,20 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
     ? `<div class="qr-box"><span class="label">QR Code</span><span class="valor">${qrTexto}</span></div>`
     : `<div class="qr-box"><span class="label">QR Code</span><span class="valor" style="color:#e6473a">não lido</span></div>`;
 
+  // monta o objeto JSON final (QR + respostas), no mesmo formato usado
+  // nos testes de IA (Sonnet/Qwen/Moondream) para facilitar comparacao
+  const respostasOrdenadas = {};
+  for (let q = 1; q <= 10; q++) {
+    respostasOrdenadas[String(q).padStart(2, '0')] = respostas[q] || null;
+  }
+  const jsonResultado = {
+    qrcode: qrTexto || null,
+    respostas: respostasOrdenadas,
+    ambiguas: Array.from(ambiguas).map(q => String(q).padStart(2, '0')),
+    tempo_processamento_ms: Math.round(elapsedMs),
+  };
+  const jsonTexto = JSON.stringify(jsonResultado, null, 2);
+
   areaResultado.innerHTML = `
     <div class="card">
       ${avisoParcial ? `<div class="erro-box" style="margin-bottom:14px;">${avisoParcial}</div>` : ''}
@@ -795,13 +832,35 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
         ${compararGabarito ? `<div class="item"><div class="num">${acertos}/${totalComparado}</div><div class="txt">Acurácia</div></div>` : ''}
       </div>
     </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <span style="font-size:0.72rem;color:#6b7a99;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;">Resultado em JSON</span>
+        <button class="btn-copiar" id="btnCopiarJson">📋 Copiar</button>
+      </div>
+      <pre id="jsonOutput" class="json-box">${escaparHtml(jsonTexto)}</pre>
+    </div>
     <button class="btn-secundario" id="btnNovaLeitura">🔄 Nova leitura</button>
   `;
   document.getElementById('overlayHost').appendChild(overlayCanvas);
+
+  document.getElementById('btnCopiarJson').onclick = () => {
+    navigator.clipboard.writeText(jsonTexto).then(() => {
+      const btn = document.getElementById('btnCopiarJson');
+      btn.textContent = '✅ Copiado!';
+      setTimeout(() => { btn.textContent = '📋 Copiar'; }, 1800);
+    });
+  };
   document.getElementById('btnNovaLeitura').onclick = () => {
     areaResultado.innerHTML = '';
     if (!painelCamera.classList.contains('hidden')) iniciarCamera();
   };
+}
+
+function escaparHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
 }
 
 /* inicia no modo câmera por padrão */

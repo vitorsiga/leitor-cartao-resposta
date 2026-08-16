@@ -108,10 +108,10 @@
     border-color: #1fb26b;
     border-style: solid;
   }
-  .corner-bracket.tl { top: 8%; left: 6%; border-width: 4px 0 0 4px; border-top-left-radius: 8px; }
-  .corner-bracket.tr { top: 8%; right: 6%; border-width: 4px 4px 0 0; border-top-right-radius: 8px; }
-  .corner-bracket.bl { bottom: 8%; left: 6%; border-width: 0 0 4px 4px; border-bottom-left-radius: 8px; }
-  .corner-bracket.br { bottom: 8%; right: 6%; border-width: 0 4px 4px 0; border-bottom-right-radius: 8px; }
+  .corner-bracket.tl { border-width: 4px 0 0 4px; border-top-left-radius: 8px; }
+  .corner-bracket.tr { border-width: 4px 4px 0 0; border-top-right-radius: 8px; }
+  .corner-bracket.bl { border-width: 0 0 4px 4px; border-bottom-left-radius: 8px; }
+  .corner-bracket.br { border-width: 0 4px 4px 0; border-bottom-right-radius: 8px; }
   .status-cantos {
     display: flex;
     align-items: center;
@@ -472,9 +472,14 @@ async function iniciarCamera() {
   try {
     pararCamera();
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+      video: { facingMode: 'environment', width: { ideal: 1080 }, height: { ideal: 1920 } }
     });
     video.srcObject = stream;
+    await new Promise(resolve => {
+      video.onloadedmetadata = () => { video.play(); resolve(); };
+    });
+    // espera 1 frame para o layout (video.clientWidth/Height) se estabilizar
+    requestAnimationFrame(() => requestAnimationFrame(atualizarGuiaA4));
     iniciarVerificacaoAoVivo();
   } catch (err) {
     areaResultado.innerHTML = `<div class="card"><div class="erro-box">
@@ -483,6 +488,62 @@ async function iniciarCamera() {
     </div></div>`;
   }
 }
+
+/* =========================================================================
+   GUIA VISUAL COM PROPORÇÃO REAL DE FOLHA A4
+   Em vez de posicionar os 4 cantos em porcentagens fixas (que so fazem
+   sentido para uma proporcao especifica de video), calcula dinamicamente
+   o maior retangulo com proporcao de A4 (210x297mm) que cabe dentro do
+   video exibido -- assim os cantos sempre batem com o papel, seja qual
+   for a proporcao que a camera do aparelho entregar.
+   ========================================================================= */
+const A4_RATIO = 210 / 297; // largura/altura, retrato
+
+function atualizarGuiaA4() {
+  const wrapW = video.clientWidth, wrapH = video.clientHeight;
+  if (!wrapW || !wrapH) return;
+
+  const margemFrac = 0.05;
+  const maxW = wrapW * (1 - margemFrac * 2);
+  const maxH = wrapH * (1 - margemFrac * 2);
+
+  let targetW, targetH;
+  if (maxW / maxH > A4_RATIO) {
+    targetH = maxH;
+    targetW = targetH * A4_RATIO;
+  } else {
+    targetW = maxW;
+    targetH = targetW / A4_RATIO;
+  }
+
+  const left = (wrapW - targetW) / 2;
+  const top = (wrapH - targetH) / 2;
+  const right = wrapW - left - targetW;
+  const bottom = wrapH - top - targetH;
+
+  posicionarCanto('cornerTL', { top, left });
+  posicionarCanto('cornerTR', { top, right });
+  posicionarCanto('cornerBL', { bottom, left });
+  posicionarCanto('cornerBR', { bottom, right });
+
+  // guarda o retangulo-alvo para o check ao vivo poder comparar proporcao
+  guiaA4Atual = { top, left, right, bottom, wrapW, wrapH };
+}
+
+function posicionarCanto(id, coords) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.top = coords.top !== undefined ? coords.top + 'px' : '';
+  el.style.left = coords.left !== undefined ? coords.left + 'px' : '';
+  el.style.right = coords.right !== undefined ? coords.right + 'px' : '';
+  el.style.bottom = coords.bottom !== undefined ? coords.bottom + 'px' : '';
+}
+
+let guiaA4Atual = null;
+window.addEventListener('resize', () => { if (!painelCamera.classList.contains('hidden')) atualizarGuiaA4(); });
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => { if (!painelCamera.classList.contains('hidden')) atualizarGuiaA4(); }, 300);
+});
 
 function pararCamera() {
   if (stream) {

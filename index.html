@@ -522,9 +522,14 @@ async function processarImagemCapturada() {
     }
 
     const warped = corrigirPerspectiva(src, cantos);
-    src.delete();
 
-    const qrTexto = lerQRCode(warped);
+    // tenta ler o QR primeiro na foto original (resolucao maxima),
+    // e so recorre a retificada se falhar
+    let qrTexto = lerQRCodeDeCanvas(canvasCapturado);
+    if (!qrTexto) {
+      qrTexto = lerQRCodeDeMat(warped);
+    }
+    src.delete();
 
     const grade = detectarBolhas(warped);
     const totalQuestoes = Object.keys(grade).length;
@@ -625,15 +630,25 @@ function corrigirPerspectiva(src, cantos) {
 
 /* =========================================================================
    3) LEITURA DO QR CODE (via jsQR)
+   Le a partir da foto ORIGINAL (resolucao maxima da camera/upload), nao da
+   imagem retificada -- o warp para o tamanho canonico (1700px) pode borrar
+   os modulos finos do QR mesmo quando as bolhas (bem maiores) continuam
+   legiveis. Se falhar na original, tenta na retificada como fallback.
    ========================================================================= */
-function lerQRCode(warpedMat) {
+function lerQRCodeDeMat(mat) {
   const tmpCanvas = document.createElement('canvas');
-  tmpCanvas.width = warpedMat.cols;
-  tmpCanvas.height = warpedMat.rows;
-  cv.imshow(tmpCanvas, warpedMat);
-  const ctx = tmpCanvas.getContext('2d');
-  const imgData = ctx.getImageData(0, 0, tmpCanvas.width, tmpCanvas.height);
-  const resultado = jsQR(imgData.data, imgData.width, imgData.height);
+  tmpCanvas.width = mat.cols;
+  tmpCanvas.height = mat.rows;
+  cv.imshow(tmpCanvas, mat);
+  return lerQRCodeDeCanvas(tmpCanvas);
+}
+
+function lerQRCodeDeCanvas(canvas) {
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const resultado = jsQR(imgData.data, imgData.width, imgData.height, {
+    inversionAttempts: 'attemptBoth',
+  });
   return resultado ? resultado.data : null;
 }
 
@@ -803,16 +818,21 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
     ? `<div class="qr-box"><span class="label">QR Code</span><span class="valor">${qrTexto}</span></div>`
     : `<div class="qr-box"><span class="label">QR Code</span><span class="valor" style="color:#e6473a">não lido</span></div>`;
 
-  // monta o objeto JSON final (QR + respostas), no mesmo formato usado
-  // nos testes de IA (Sonnet/Qwen/Moondream) para facilitar comparacao
-  const respostasOrdenadas = {};
+  // monta o objeto JSON final (QR + respostas), como array para evitar a
+  // reordenacao automatica de chaves numericas do JavaScript ("10" antes
+  // de "01") e ficar mais facil de iterar no PHP (foreach)
+  const respostasArray = [];
   for (let q = 1; q <= 10; q++) {
-    respostasOrdenadas[String(q).padStart(2, '0')] = respostas[q] || null;
+    const numQ = String(q).padStart(2, '0');
+    respostasArray.push({
+      questao: numQ,
+      resposta: respostas[q] || null,
+      ambigua: ambiguas.has(String(q)),
+    });
   }
   const jsonResultado = {
     qrcode: qrTexto || null,
-    respostas: respostasOrdenadas,
-    ambiguas: Array.from(ambiguas).map(q => String(q).padStart(2, '0')),
+    respostas: respostasArray,
     tempo_processamento_ms: Math.round(elapsedMs),
   };
   const jsonTexto = JSON.stringify(jsonResultado, null, 2);

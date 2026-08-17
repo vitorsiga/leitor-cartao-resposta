@@ -1245,70 +1245,108 @@ function lerQRCodeDoWarped(warpedMat) {
 
 /* =========================================================================
    4) DETECÇÃO DAS BOLHAS
-   A atribuicao de cada linha encontrada ao numero de questao correto e
-   AUTO-CALIBRADA: em vez de comparar contra posicoes fixas em pixel (que
-   variam de foto pra foto dependendo da escala exata da retificacao),
-   deduz o espacamento real a partir das proprias linhas encontradas na
-   foto atual, usando a referenciaso como desempate/ancora aproximada.
+   A atribuicao de linha->questao usa CONSISTENCIA ENTRE OS DOIS BLOCOS:
+   como as questoes 1-5 e 6-10 ficam nas MESMAS linhas fisicas do cartao,
+   quando os dois blocos encontram a mesma quantidade de linhas, exige que
+   usem o MESMO deslocamento inicial (a mesma linha fisica esta faltando
+   ou presente nos dois lados) -- isso e muito mais confiavel do que uma
+   tabela fixa de calibracao em pixel, que se mostrou instavel entre fotos
+   diferentes (a escala exata da retificacao varia um pouco a cada foto).
+   A tabela abaixo so entra como criterio de desempate quando ha mais de
+   uma hipotese compativel entre os blocos.
    ========================================================================= */
 const Y_REFERENCIA = {
-  esquerda: [426, 513, 600, 692, 776],
-  direita: [446, 531, 619, 705, 791],
+  esquerda: [560, 632, 710, 784, 858],
+  direita: [575, 649, 727, 802, 877],
 };
 const NUMEROS_QUESTAO = {
   esquerda: [1, 2, 3, 4, 5],
   direita: [6, 7, 8, 9, 10],
 };
 
-function atribuirQuestoes(linhasValidas, yReferencia) {
-  if (linhasValidas.length === 0) return {};
-
-  const comY = linhasValidas.map(linha => ({
-    linha,
-    y: linha.reduce((s, p) => s + p.y, 0) / linha.length,
-  }));
-  comY.sort((a, b) => a.y - b.y);
-  const ys = comY.map(o => o.y);
-  const k = ys.length;
-
-  if (k === 5) {
-    const resultado = {};
-    for (let i = 0; i < 5; i++) resultado[i] = comY[i].linha;
-    return resultado;
-  }
-  if (k === 1) {
-    let idx = 0, menorDist = Infinity;
-    for (let i = 0; i < yReferencia.length; i++) {
-      const d = Math.abs(ys[0] - yReferencia[i]);
-      if (d < menorDist) { menorDist = d; idx = i; }
-    }
-    return { [idx]: comY[0].linha };
-  }
-
+function gerarHipoteses(ys, k) {
+  if (k === 0) return [];
+  if (k === 5) return [[0, 1, 2, 3, 4]];
   const gaps = [];
   for (let i = 1; i < ys.length; i++) gaps.push(ys[i] - ys[i - 1]);
-  gaps.sort((a, b) => a - b);
-  const espacamentoMediano = gaps[Math.floor(gaps.length / 2)];
+  const gapsOrdenados = [...gaps].sort((a, b) => a - b);
+  const espacamentoMediano = gaps.length ? gapsOrdenados[Math.floor(gaps.length / 2)] : 74;
 
-  let melhorErro = Infinity, melhorSlots = null;
+  const hipoteses = [];
   for (let slotInicial = 0; slotInicial <= 5 - k; slotInicial++) {
     const slots = [slotInicial];
     let valido = true;
-    for (let i = 1; i < ys.length; i++) {
-      const passos = Math.max(1, Math.round((ys[i] - ys[i - 1]) / espacamentoMediano));
+    for (const g of gaps) {
+      const passos = Math.max(1, Math.round(g / espacamentoMediano));
       const proximo = slots[slots.length - 1] + passos;
       if (proximo > 4) { valido = false; break; }
       slots.push(proximo);
     }
-    if (!valido) continue;
-    const erro = Math.abs(ys[0] - yReferencia[slots[0]]);
-    if (erro < melhorErro) { melhorErro = erro; melhorSlots = slots; }
+    if (valido) hipoteses.push(slots);
+  }
+  return hipoteses;
+}
+
+function atribuirQuestoesConjunto(linhasEsq, linhasDir) {
+  const comY = (linhas) => linhas
+    .map(l => ({ linha: l, y: l.reduce((s, p) => s + p.y, 0) / l.length }))
+    .sort((a, b) => a.y - b.y);
+
+  const dadosEsq = comY(linhasEsq), dadosDir = comY(linhasDir);
+  const ysEsq = dadosEsq.map(d => d.y), ysDir = dadosDir.map(d => d.y);
+  const kEsq = ysEsq.length, kDir = ysDir.length;
+
+  const resultadoEsq = {}, resultadoDir = {};
+
+  if (kEsq === kDir && kEsq > 0) {
+    const hipEsq = gerarHipoteses(ysEsq, kEsq);
+    const hipDir = gerarHipoteses(ysDir, kDir);
+    const mapaEsq = {}; hipEsq.forEach(h => { mapaEsq[h[0]] = h; });
+    const mapaDir = {}; hipDir.forEach(h => { mapaDir[h[0]] = h; });
+    const comuns = Object.keys(mapaEsq).filter(k => k in mapaDir);
+
+    if (comuns.length > 0) {
+      let melhorErro = Infinity, melhorInicial = null;
+      for (const si of comuns) {
+        const slotsE = mapaEsq[si], slotsD = mapaDir[si];
+        let erro = 0;
+        for (let i = 0; i < kEsq; i++) erro += (ysEsq[i] - Y_REFERENCIA.esquerda[slotsE[i]]) ** 2;
+        for (let i = 0; i < kDir; i++) erro += (ysDir[i] - Y_REFERENCIA.direita[slotsD[i]]) ** 2;
+        if (erro < melhorErro) { melhorErro = erro; melhorInicial = si; }
+      }
+      const slotsE = mapaEsq[melhorInicial], slotsD = mapaDir[melhorInicial];
+      for (let i = 0; i < kEsq; i++) resultadoEsq[slotsE[i]] = dadosEsq[i].linha;
+      for (let i = 0; i < kDir; i++) resultadoDir[slotsD[i]] = dadosDir[i].linha;
+      return { esquerda: resultadoEsq, direita: resultadoDir };
+    }
   }
 
-  if (!melhorSlots) return {};
-  const resultado = {};
-  for (let i = 0; i < k; i++) resultado[melhorSlots[i]] = comY[i].linha;
-  return resultado;
+  // fallback: quantidades diferentes entre os blocos (ou sem hipotese em
+  // comum) -- cada bloco usa a tabela de referencia de forma independente
+  const resolverIndependente = (ys, dados, nome, resultado) => {
+    const k = ys.length;
+    if (k === 0) return;
+    if (k === 1) {
+      let idx = 0, menorDist = Infinity;
+      for (let i = 0; i < Y_REFERENCIA[nome].length; i++) {
+        const d = Math.abs(ys[0] - Y_REFERENCIA[nome][i]);
+        if (d < menorDist) { menorDist = d; idx = i; }
+      }
+      resultado[idx] = dados[0].linha;
+      return;
+    }
+    const hipoteses = gerarHipoteses(ys, k);
+    let melhorErro = Infinity, melhorSlots = null;
+    for (const slots of hipoteses) {
+      let erro = 0;
+      for (let i = 0; i < k; i++) erro += (ys[i] - Y_REFERENCIA[nome][slots[i]]) ** 2;
+      if (erro < melhorErro) { melhorErro = erro; melhorSlots = slots; }
+    }
+    if (melhorSlots) for (let i = 0; i < k; i++) resultado[melhorSlots[i]] = dados[i].linha;
+  };
+  resolverIndependente(ysEsq, dadosEsq, 'esquerda', resultadoEsq);
+  resolverIndependente(ysDir, dadosDir, 'direita', resultadoDir);
+  return { esquerda: resultadoEsq, direita: resultadoDir };
 }
 
 function detectarBolhas(warpedMat) {
@@ -1341,9 +1379,8 @@ function detectarBolhas(warpedMat) {
     direita: [870, 1650],
   };
   const y0 = 170, y1 = 830;
-
-  const grade = {};
   const LETRAS = ['A', 'B', 'C', 'D', 'E'];
+  const linhasPorBloco = {};
 
   for (const nome in blocos) {
     const [x0, x1] = blocos[nome];
@@ -1376,13 +1413,21 @@ function detectarBolhas(warpedMat) {
 
     const linhasValidas = linhas.filter(l => l.length === 5);
     for (const linha of linhasValidas) linha.sort((a, b) => a.x - b.x);
+    linhasPorBloco[nome] = linhasValidas;
+  }
 
-    const atribuicao = atribuirQuestoes(linhasValidas, Y_REFERENCIA[nome]);
-    const numQuestoes = NUMEROS_QUESTAO[nome];
-    for (const idx in atribuicao) {
-      const q = numQuestoes[idx];
-      grade[q] = atribuicao[idx].map((p, i) => ({ letra: LETRAS[i], x: p.x, y: p.y, r: p.r }));
-    }
+  const { esquerda: atribEsq, direita: atribDir } = atribuirQuestoesConjunto(
+    linhasPorBloco.esquerda, linhasPorBloco.direita
+  );
+
+  const grade = {};
+  for (const idx in atribEsq) {
+    const q = NUMEROS_QUESTAO.esquerda[idx];
+    grade[q] = atribEsq[idx].map((p, i) => ({ letra: LETRAS[i], x: p.x, y: p.y, r: p.r }));
+  }
+  for (const idx in atribDir) {
+    const q = NUMEROS_QUESTAO.direita[idx];
+    grade[q] = atribDir[idx].map((p, i) => ({ letra: LETRAS[i], x: p.x, y: p.y, r: p.r }));
   }
 
   gray.delete(); blur.delete();

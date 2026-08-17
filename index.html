@@ -1493,7 +1493,13 @@ function detectarBolhas(warpedMat) {
   // um pouco diferente, a 5a linha de cada bloco pode ficar mais baixa do
   // que a faixa antiga cobria (confirmado: uma foto real tinha a linha 5
   // em y=888, fora do limite antigo de 830, ficando impossivel de achar)
-  const y0 = 170, y1 = 980;
+  // faixa Y DELIBERADAMENTE GENEROSA (quase toda a altura util da pagina),
+  // em vez de um numero calibrado numa foto especifica -- numeros fixos
+  // calibrados sempre acabam ficando pequenos demais para alguma foto com
+  // escala de retificacao um pouco diferente (ja aconteceu 3x neste
+  // projeto). Deixa o agrupamento por proximidade (mais abaixo) descobrir
+  // a estrutura real das 5 linhas, em vez de assumir onde elas estao.
+  const y0 = 150, y1 = 1700;
   const LETRAS = ['A', 'B', 'C', 'D', 'E'];
   const linhasPorBloco = {};
 
@@ -1526,7 +1532,20 @@ function detectarBolhas(warpedMat) {
       if (!colocado) linhas.push([p]);
     }
 
-    const linhasValidas = linhas.filter(l => l.length === 5);
+    // exige exatamente 5 pontos agrupados E espacamento horizontal
+    // consistente entre eles -- isso rejeita agrupamentos espurios (ex:
+    // letras do cabecalho ou padroes do QR code que por coincidencia
+    // caem a uma distancia Y parecida), que tem espacamento MUITO
+    // irregular comparado as colunas reais das bolhas
+    const linhasValidas = linhas.filter(l => {
+      if (l.length !== 5) return false;
+      const xsOrdenados = l.map(p => p.x).sort((a, b) => a - b);
+      const gaps = [];
+      for (let i = 1; i < xsOrdenados.length; i++) gaps.push(xsOrdenados[i] - xsOrdenados[i - 1]);
+      const menorGap = Math.min(...gaps), maiorGap = Math.max(...gaps);
+      if (menorGap <= 0) return false;
+      return (maiorGap / menorGap) <= 3.0;
+    });
     for (const linha of linhasValidas) linha.sort((a, b) => a.x - b.x);
     linhasPorBloco[nome] = linhasValidas;
   }

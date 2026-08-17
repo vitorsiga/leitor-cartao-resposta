@@ -1588,7 +1588,31 @@ function detectarBolhas(warpedMat) {
       const melhor = melhorSubconjuntoDe5(l);
       if (melhor) linhasValidas.push(melhor);
     }
-    linhasPorBloco[nome] = linhasValidas;
+    // Filtro adicional: remove linhas candidatas ISOLADAS (muito mais
+    // longe de qualquer vizinha do que o espacamento tipico entre as
+    // outras linhas do bloco). Isso pega casos raros onde texto do
+    // cabecalho forma, por coincidencia, um agrupamento de 5 pontos com
+    // espacamento horizontal aceitavel -- mas sempre fica isolado no
+    // eixo Y, bem longe das linhas de bolhas reais (que ficam a uma
+    // distancia bem regular umas das outras, ~75-100px no espaco canonico)
+    function removerLinhasIsoladas(linhas, razaoMax = 1.8) {
+      if (linhas.length < 3) return linhas; // sem base suficiente pra comparar
+      const comY = linhas.map(l => ({ linha: l, y: l.reduce((s, p) => s + p.y, 0) / l.length }));
+      comY.sort((a, b) => a.y - b.y);
+      const ys = comY.map(o => o.y);
+      const gaps = [];
+      for (let i = 1; i < ys.length; i++) gaps.push(ys[i] - ys[i - 1]);
+      const gapsOrdenados = [...gaps].sort((a, b) => a - b);
+      const mediana = gapsOrdenados[Math.floor(gapsOrdenados.length / 2)];
+
+      return comY.filter((o, i) => {
+        const gapAnterior = i > 0 ? ys[i] - ys[i - 1] : Infinity;
+        const gapProximo = i < ys.length - 1 ? ys[i + 1] - ys[i] : Infinity;
+        return Math.min(gapAnterior, gapProximo) <= razaoMax * mediana;
+      }).map(o => o.linha);
+    }
+
+    linhasPorBloco[nome] = removerLinhasIsoladas(linhasValidas);
   }
 
   // ✅ Deteccao por marcadores VALIDADA contra foto real (10/10 correto).

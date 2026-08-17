@@ -1532,21 +1532,62 @@ function detectarBolhas(warpedMat) {
       if (!colocado) linhas.push([p]);
     }
 
-    // exige exatamente 5 pontos agrupados E espacamento horizontal
-    // consistente entre eles -- isso rejeita agrupamentos espurios (ex:
-    // letras do cabecalho ou padroes do QR code que por coincidencia
-    // caem a uma distancia Y parecida), que tem espacamento MUITO
-    // irregular comparado as colunas reais das bolhas
-    const linhasValidas = linhas.filter(l => {
-      if (l.length !== 5) return false;
-      const xsOrdenados = l.map(p => p.x).sort((a, b) => a - b);
-      const gaps = [];
-      for (let i = 1; i < xsOrdenados.length; i++) gaps.push(xsOrdenados[i] - xsOrdenados[i - 1]);
-      const menorGap = Math.min(...gaps), maiorGap = Math.max(...gaps);
-      if (menorGap <= 0) return false;
-      return (maiorGap / menorGap) <= 3.0;
-    });
-    for (const linha of linhasValidas) linha.sort((a, b) => a.x - b.x);
+    // Para cada agrupamento com 5 OU MAIS pontos, tenta achar o melhor
+    // subconjunto de exatamente 5 com espacamento horizontal consistente
+    // -- em vez de exigir exatamente 5 pontos (o que descarta a linha
+    // inteira quando 1 ponto espurio se mistura com 5 pontos legitimos).
+    // So aceita se a melhor combinacao encontrada tiver razao max/min de
+    // espacamento <= 3.0 (rejeita agrupamentos genuinamente espurios,
+    // como coincidencias do cabecalho ou do QR code).
+    function melhorSubconjuntoDe5(pontos) {
+      const ordenado = [...pontos].sort((a, b) => a.x - b.x);
+      const n = ordenado.length;
+      if (n < 5) return null;
+
+      let melhorRazao = Infinity, melhorCombo = null;
+      const avaliar = (indices) => {
+        const xs = indices.map(i => ordenado[i].x);
+        const gaps = [];
+        for (let i = 1; i < 5; i++) gaps.push(xs[i] - xs[i - 1]);
+        const menor = Math.min(...gaps), maior = Math.max(...gaps);
+        if (menor <= 0) return;
+        const razao = maior / menor;
+        if (razao < melhorRazao) { melhorRazao = razao; melhorCombo = indices; }
+      };
+
+      if (n === 5) {
+        avaliar([0, 1, 2, 3, 4]);
+      } else {
+        // combinacoes de 5 indices dentre n pontos (n costuma ser <=8,
+        // entao o numero de combinacoes e pequeno e barato de calcular)
+        const combinar = (start, atual) => {
+          if (atual.length === 5) { avaliar([...atual]); return; }
+          for (let i = start; i < n; i++) {
+            atual.push(i);
+            combinar(i + 1, atual);
+            atual.pop();
+          }
+        };
+        combinar(0, []);
+      }
+
+      if (melhorCombo && melhorRazao <= 3.0) {
+        return melhorCombo.map(i => ordenado[i]);
+      }
+      return null;
+    }
+
+    const linhasValidas = [];
+    for (const l of linhas) {
+      // so tenta resgatar clusters com ATE 2 pontos extras (5 a 7 no
+      // total) -- clusters muito maiores (ex: 10 pontos de texto do
+      // cabecalho) quase sempre tem ALGUM subconjunto de 5 com espacamento
+      // parecido por pura coincidencia estatistica, entao exigimos que o
+      // cluster ja comece proximo do tamanho esperado
+      if (l.length < 5 || l.length > 7) continue;
+      const melhor = melhorSubconjuntoDe5(l);
+      if (melhor) linhasValidas.push(melhor);
+    }
     linhasPorBloco[nome] = linhasValidas;
   }
 

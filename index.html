@@ -108,6 +108,29 @@
     object-fit: cover; /* corta o excesso dos lados, preenchendo o formato A4 */
     display: block;
   }
+  .btn-lanterna {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(11,31,58,0.55);
+    color: white;
+    font-size: 1.2rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(2px);
+    transition: background 0.2s ease;
+    z-index: 5;
+  }
+  .btn-lanterna.ativa {
+    background: var(--yellow);
+    box-shadow: 0 0 14px rgba(255,199,44,0.7);
+  }
   .corner-bracket {
     position: absolute;
     width: 56px;
@@ -347,6 +370,7 @@
         <div class="corner-bracket tr" id="cornerTR"></div>
         <div class="corner-bracket bl" id="cornerBL"></div>
         <div class="corner-bracket br" id="cornerBR"></div>
+        <button class="btn-lanterna" id="btnLanterna" style="display:none;" title="Ligar lanterna">🔦</button>
       </div>
       <div class="status-cantos" id="statusCantos">
         <span id="textoCantos">Aponte para o cartão...</span>
@@ -494,6 +518,7 @@ async function iniciarCamera() {
     // espera 1 frame para o layout (video.clientWidth/Height) se estabilizar
     requestAnimationFrame(() => requestAnimationFrame(atualizarGuiaA4));
     iniciarVerificacaoAoVivo();
+    prepararLanterna();
   } catch (err) {
     areaResultado.innerHTML = `<div class="card"><div class="erro-box">
       Não foi possível acessar a câmera: ${err.message}.<br>
@@ -501,6 +526,44 @@ async function iniciarCamera() {
     </div></div>`;
   }
 }
+
+/* =========================================================================
+   LANTERNA (torch) -- ajuda a reduzir sombra e melhorar contraste das
+   bolhas/QR em ambientes com pouca luz. Nem todo navegador/aparelho
+   suporta -- o botao so aparece quando a faixa de video atual suporta.
+   ========================================================================= */
+let lanternaAtiva = false;
+
+function prepararLanterna() {
+  const btnLanterna = document.getElementById('btnLanterna');
+  lanternaAtiva = false;
+  btnLanterna.classList.remove('ativa');
+  btnLanterna.style.display = 'none';
+
+  const track = stream?.getVideoTracks()?.[0];
+  if (!track || typeof track.getCapabilities !== 'function') return;
+
+  const caps = track.getCapabilities();
+  if (caps && caps.torch) {
+    btnLanterna.style.display = 'flex';
+  }
+}
+
+async function alternarLanterna() {
+  const track = stream?.getVideoTracks()?.[0];
+  if (!track) return;
+  const btnLanterna = document.getElementById('btnLanterna');
+  try {
+    lanternaAtiva = !lanternaAtiva;
+    await track.applyConstraints({ advanced: [{ torch: lanternaAtiva }] });
+    btnLanterna.classList.toggle('ativa', lanternaAtiva);
+  } catch (e) {
+    console.warn('Nao foi possivel controlar a lanterna:', e);
+    lanternaAtiva = !lanternaAtiva; // desfaz o estado, ja que falhou
+  }
+}
+
+document.getElementById('btnLanterna').onclick = alternarLanterna;
 
 /* =========================================================================
    GUIA VISUAL COM PROPORÇÃO REAL DE FOLHA A4
@@ -563,6 +626,9 @@ function pararCamera() {
     stream.getTracks().forEach(t => t.stop());
     stream = null;
   }
+  lanternaAtiva = false;
+  const btnLanterna = document.getElementById('btnLanterna');
+  if (btnLanterna) { btnLanterna.classList.remove('ativa'); btnLanterna.style.display = 'none'; }
   pararVerificacaoAoVivo();
 }
 

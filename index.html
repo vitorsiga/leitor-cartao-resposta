@@ -1356,8 +1356,8 @@ function classificarForma(cnt) {
 // busca o marcador de UMA linha especifica, numa janela pequena e
 // calibrada relativa a posicao ja detectada da bolha "A" dessa linha
 function detectarMarcadorDaLinha(warpedGray, xColunaA, yLinha) {
-  const xIni = Math.max(0, Math.round(xColunaA - 165));
-  const xFim = Math.max(0, Math.round(xColunaA - 95));
+  const xIni = Math.max(0, Math.round(xColunaA - 170));
+  const xFim = Math.max(0, Math.round(xColunaA - 118));
   const yIni = Math.max(0, Math.round(yLinha - 22));
   const yFim = Math.min(warpedGray.rows, Math.round(yLinha + 22));
   if (xFim <= xIni || yFim <= yIni) return [];

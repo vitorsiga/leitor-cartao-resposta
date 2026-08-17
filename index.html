@@ -1515,11 +1515,14 @@ function detectarBolhas(warpedMat) {
     linhasPorBloco[nome] = linhasValidas;
   }
 
-  // tenta usar os marcadores impressos (quadrado/traco/losango/triangulo)
-  // para confirmar a posicao de cada linha -- so aceita se formar uma
-  // sequencia 100% consistente (sem duplicar nem pular posicao); caso
-  // contrario, ignora e deixa o metodo de espacamento/consistencia decidir
+  // ⚠️ DESATIVADO TEMPORARIAMENTE: a deteccao de marcadores (abaixo) ainda
+  // nao esta confiavel o suficiente -- em teste com foto real, produziu
+  // resultado PIOR que o metodo antigo (que ja e validado). O codigo de
+  // deteccao continua aqui para eu poder debugar com calma, mas por
+  // enquanto o resultado final usa sempre o metodo antigo (espacamento +
+  // consistencia entre blocos), ignorando o que os marcadores encontrarem.
   const atribuicaoPorMarcador = { esquerda: null, direita: null };
+  /*
   for (const nome in blocos) {
     const [xBloco] = blocos[nome];
     const linhasValidas = linhasPorBloco[nome];
@@ -1538,8 +1541,6 @@ function detectarBolhas(warpedMat) {
         const d = Math.abs(m.y - yLinha);
         if (d < menorDist) { menorDist = d; melhor = m; }
       }
-      // so aceita casamento marcador<->linha dentro de uma distancia
-      // plausivel (meia altura de linha, ~40px no espaco canonico)
       if (!melhor || menorDist > 40 || melhor.pos in mapa) { consistente = false; break; }
       mapa[melhor.pos] = linha;
     }
@@ -1547,6 +1548,7 @@ function detectarBolhas(warpedMat) {
       atribuicaoPorMarcador[nome] = mapa;
     }
   }
+  */
 
   let atribEsq, atribDir;
   if (atribuicaoPorMarcador.esquerda && atribuicaoPorMarcador.direita) {

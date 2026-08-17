@@ -935,6 +935,40 @@ function detectarPapel(src) {
   return melhorRect; // {x, y, width, height} ou null
 }
 
+/* =========================================================================
+   LIMIAR ADAPTATIVO (Otsu, calculado manualmente)
+   Em vez de um valor fixo de threshold (que falha quando a foto tem
+   exposicao/contraste diferente -- ex: marcador de canto aparecendo mais
+   claro que o esperado por causa de auto-exposicao da camera), calcula o
+   limiar ideal PARA CADA regiao individualmente, baseado no histograma
+   real daquela regiao. Implementado manualmente (nao usa cv.THRESH_OTSU)
+   porque essa constante pode nao estar disponivel em todas as builds do
+   OpenCV.js.
+   ========================================================================= */
+function computarLimiarOtsu(matGray) {
+  const hist = new Array(256).fill(0);
+  const data = matGray.data;
+  for (let i = 0; i < data.length; i++) hist[data[i]]++;
+  const total = data.length;
+
+  let somaTotal = 0;
+  for (let t = 0; t < 256; t++) somaTotal += t * hist[t];
+
+  let somaAcumulada = 0, pesoFundo = 0, maiorVariancia = 0, limiar = 127;
+  for (let t = 0; t < 256; t++) {
+    pesoFundo += hist[t];
+    if (pesoFundo === 0) continue;
+    const pesoFrente = total - pesoFundo;
+    if (pesoFrente === 0) break;
+    somaAcumulada += t * hist[t];
+    const mediaFundo = somaAcumulada / pesoFundo;
+    const mediaFrente = (somaTotal - somaAcumulada) / pesoFrente;
+    const variancia = pesoFundo * pesoFrente * (mediaFundo - mediaFrente) * (mediaFundo - mediaFrente);
+    if (variancia > maiorVariancia) { maiorVariancia = variancia; limiar = t; }
+  }
+  return limiar;
+}
+
 function detectarCantosParcial(src) {
   const papel = detectarPapel(src);
   if (!papel) return {};
@@ -942,8 +976,6 @@ function detectarCantosParcial(src) {
 
   const gray = new cv.Mat();
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  const thresh = new cv.Mat();
-  cv.threshold(gray, thresh, 70, 255, cv.THRESH_BINARY_INV);
 
   const regioes = {
     top_left:     [0.00, 0.15, 0.00, 0.12],
@@ -973,7 +1005,15 @@ function detectarCantosParcial(src) {
     if (rectX1 <= rectX0 || rectY1 <= rectY0) continue;
 
     const rect = new cv.Rect(rectX0, rectY0, rectX1 - rectX0, rectY1 - rectY0);
-    const roi = thresh.roi(rect);
+    const roiGray = gray.roi(rect);
+
+    // threshold adaptativo (Otsu manual), calculado PARA ESSA regiao
+    // especifica -- se ajusta sozinho a foto com exposicao/contraste
+    // diferentes, em vez de depender de um valor fixo
+    const limiar = computarLimiarOtsu(roiGray);
+    const roi = new cv.Mat();
+    cv.threshold(roiGray, roi, limiar, 255, cv.THRESH_BINARY_INV);
+    roiGray.delete();
 
     const contours = new cv.MatVector();
     const hierarchy = new cv.Mat();
@@ -1000,10 +1040,10 @@ function detectarCantosParcial(src) {
         valores.push(metrica({ x: melhorPts[k], y: melhorPts[k + 1] }));
       }
       const ordenados = [...valores].sort((a, b) => a - b);
-      const limiar = ordenados[Math.max(0, Math.floor(ordenados.length * 0.10) - 1)];
+      const limiarPercentil = ordenados[Math.max(0, Math.floor(ordenados.length * 0.10) - 1)];
       let somaX = 0, somaY = 0, count = 0;
       for (let k = 0; k < melhorPts.length; k += 2) {
-        if (valores[k / 2] <= limiar) {
+        if (valores[k / 2] <= limiarPercentil) {
           somaX += melhorPts[k]; somaY += melhorPts[k + 1]; count++;
         }
       }

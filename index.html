@@ -900,16 +900,20 @@ async function processarImagemCapturada() {
 
     const grade = detectarBolhas(warped);
     const totalQuestoes = Object.keys(grade).length;
+
+    // mesmo em caso parcial, ainda vale a pena mostrar as respostas das
+    // questoes que FORAM identificadas -- antes isso ficava tudo em branco
+    const { respostas, ambiguas } = lerRespostas(warped, grade);
+    const elapsed = performance.now() - t0;
+
     if (totalQuestoes < 10) {
-      renderizarResultado(warped, grade, {}, qrTexto, performance.now() - t0,
-        `⚠️ Só foi possível localizar ${totalQuestoes}/10 linhas de questões com confiança. Resultado abaixo é parcial.`);
+      renderizarResultado(warped, grade, respostas, qrTexto, elapsed,
+        `⚠️ Só foi possível localizar ${totalQuestoes}/10 linhas de questões com confiança. As respostas abaixo são das questões identificadas; as demais precisam de nova tentativa.`,
+        ambiguas);
       warped.delete();
       return;
     }
 
-    const { respostas, ambiguas } = lerRespostas(warped, grade);
-
-    const elapsed = performance.now() - t0;
     renderizarResultado(warped, grade, respostas, qrTexto, elapsed, null, ambiguas);
     warped.delete();
 
@@ -1525,6 +1529,7 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
       <pre id="jsonOutput" class="json-box">${escaparHtml(jsonTexto)}</pre>
     </div>
     <button class="btn-secundario" id="btnNovaLeitura">🔄 Nova leitura</button>
+    <button class="btn-secundario" id="btnBaixarFotoResultado" style="margin-top:8px;">📥 Baixar foto original</button>
   `;
   document.getElementById('overlayHost').appendChild(overlayCanvas);
 
@@ -1539,6 +1544,7 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
     areaResultado.innerHTML = '';
     if (!painelCamera.classList.contains('hidden')) iniciarCamera();
   };
+  document.getElementById('btnBaixarFotoResultado').onclick = baixarFotoOriginal;
 }
 
 function escaparHtml(str) {

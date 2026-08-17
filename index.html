@@ -1285,6 +1285,107 @@ function gerarHipoteses(ys, k) {
   return hipoteses;
 }
 
+/* =========================================================================
+   DETECÇÃO DOS MARCADORES DE LINHA/COLUNA (layout novo do cartão)
+   ⚠️ AVISO IMPORTANTE: esta secao ainda NAO foi validada contra uma foto
+   real impressa com o novo layout de marcadores (quadrado/traco/losango/
+   3 tracos/triangulo). A regiao de busca e ADAPTATIVA (relativa a posicao
+   das bolhas ja detectadas, nao pixels fixos), mas os parametros exatos
+   podem precisar de ajuste assim que houver uma foto real pra calibrar --
+   igual fizemos com todas as outras correcoes deste app. Por seguranca,
+   os marcadores so SUBSTITUEM a atribuicao normal quando formam uma
+   sequencia consistente (0,1,2,3,4 em ordem); caso contrario, o sistema
+   usa o metodo antigo (espacamento + consistencia entre blocos).
+   ========================================================================= */
+function classificarForma(cnt) {
+  const area = cv.contourArea(cnt);
+  const br = cv.boundingRect(cnt);
+  const bw = br.width, bh = br.height;
+  if (bw === 0 || bh === 0 || area < 8) return null;
+
+  const fillRatio = area / (bw * bh);
+  const aspect = bw / bh;
+
+  // centroide Y normalizado (0=topo, 1=base, 0.5=centro) -- calculado
+  // manualmente a partir dos pontos do contorno, sem depender de cv.moments
+  const pts = cnt.data32S;
+  let somaY = 0, n = 0;
+  for (let k = 1; k < pts.length; k += 2) { somaY += pts[k]; n++; }
+  const centroY = n > 0 ? (somaY / n - br.y) / bh : 0.5;
+
+  // tracos: muito mais largos que altos (ou vice-versa), forma alongada
+  if (aspect > 2.3 || aspect < 0.43) return 'traco';
+
+  if (fillRatio > 0.75 && aspect > 0.7 && aspect < 1.4) return 'quadrado';
+
+  if (fillRatio > 0.3 && fillRatio < 0.7 && aspect > 0.7 && aspect < 1.35) {
+    // losango (simetrico) vs triangulo (massa deslocada para a base)
+    return centroY > 0.56 ? 'triangulo' : 'losango';
+  }
+  return null;
+}
+
+function detectarMarcadoresBloco(warpedGray, xEsquerdaBloco, y0, y1) {
+  // regiao de busca ADAPTATIVA: a esquerda do inicio do bloco de bolhas,
+  // ate uma distancia generosa (nao temos calibracao real ainda)
+  const xIni = Math.max(0, xEsquerdaBloco - 220);
+  const xFim = Math.max(0, xEsquerdaBloco - 8);
+  if (xFim <= xIni) return [];
+
+  const rect = new cv.Rect(xIni, Math.max(0, y0), xFim - xIni, Math.min(warpedGray.rows, y1) - Math.max(0, y0));
+  const roi = warpedGray.roi(rect);
+  const limiar = computarLimiarOtsu(roi);
+  const thresh = new cv.Mat();
+  cv.threshold(roi, thresh, limiar, 255, cv.THRESH_BINARY_INV);
+
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
+  cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  const achados = [];
+  for (let i = 0; i < contours.size(); i++) {
+    const cnt = contours.get(i);
+    const area = cv.contourArea(cnt);
+    if (area >= 8) {
+      const forma = classificarForma(cnt);
+      if (forma) {
+        const br = cv.boundingRect(cnt);
+        achados.push({ forma, y: y0 + br.y + br.height / 2 });
+      }
+    }
+    cnt.delete();
+  }
+  roi.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+  return achados;
+}
+
+// agrupa tracos proximos (1 ou 3 barras empilhadas = um unico marcador)
+// e classifica a posicao final (0=quadrado,1=1traco,2=losango,3=3tracos,4=triangulo)
+function interpretarMarcadoresBloco(achados) {
+  const FORMA_PARA_POS = { quadrado: 0, losango: 2, triangulo: 4 };
+  const resultado = [];
+  const tracos = achados.filter(a => a.forma === 'traco').sort((a, b) => a.y - b.y);
+  const usados = new Set();
+
+  for (let i = 0; i < tracos.length; i++) {
+    if (usados.has(i)) continue;
+    const grupo = [tracos[i]];
+    usados.add(i);
+    for (let j = i + 1; j < tracos.length; j++) {
+      if (usados.has(j)) continue;
+      if (Math.abs(tracos[j].y - grupo[grupo.length - 1].y) < 10) { grupo.push(tracos[j]); usados.add(j); }
+    }
+    const yMedio = grupo.reduce((s, g) => s + g.y, 0) / grupo.length;
+    const pos = grupo.length >= 2 ? 3 : 1;
+    resultado.push({ pos, y: yMedio });
+  }
+
+  for (const a of achados) {
+    if (a.forma in FORMA_PARA_POS) resultado.push({ pos: FORMA_PARA_POS[a.forma], y: a.y });
+  }
+  return resultado;
+}
+
 function atribuirQuestoesConjunto(linhasEsq, linhasDir) {
   const comY = (linhas) => linhas
     .map(l => ({ linha: l, y: l.reduce((s, p) => s + p.y, 0) / l.length }))
@@ -1414,9 +1515,48 @@ function detectarBolhas(warpedMat) {
     linhasPorBloco[nome] = linhasValidas;
   }
 
-  const { esquerda: atribEsq, direita: atribDir } = atribuirQuestoesConjunto(
-    linhasPorBloco.esquerda, linhasPorBloco.direita
-  );
+  // tenta usar os marcadores impressos (quadrado/traco/losango/triangulo)
+  // para confirmar a posicao de cada linha -- so aceita se formar uma
+  // sequencia 100% consistente (sem duplicar nem pular posicao); caso
+  // contrario, ignora e deixa o metodo de espacamento/consistencia decidir
+  const atribuicaoPorMarcador = { esquerda: null, direita: null };
+  for (const nome in blocos) {
+    const [xBloco] = blocos[nome];
+    const linhasValidas = linhasPorBloco[nome];
+    if (linhasValidas.length === 0) continue;
+
+    const achados = detectarMarcadoresBloco(gray, xBloco, y0, y1);
+    const marcadores = interpretarMarcadoresBloco(achados);
+    if (marcadores.length === 0) continue;
+
+    const mapa = {};
+    let consistente = true;
+    for (const linha of linhasValidas) {
+      const yLinha = linha.reduce((s, p) => s + p.y, 0) / linha.length;
+      let melhor = null, menorDist = Infinity;
+      for (const m of marcadores) {
+        const d = Math.abs(m.y - yLinha);
+        if (d < menorDist) { menorDist = d; melhor = m; }
+      }
+      // so aceita casamento marcador<->linha dentro de uma distancia
+      // plausivel (meia altura de linha, ~40px no espaco canonico)
+      if (!melhor || menorDist > 40 || melhor.pos in mapa) { consistente = false; break; }
+      mapa[melhor.pos] = linha;
+    }
+    if (consistente && Object.keys(mapa).length === linhasValidas.length) {
+      atribuicaoPorMarcador[nome] = mapa;
+    }
+  }
+
+  let atribEsq, atribDir;
+  if (atribuicaoPorMarcador.esquerda && atribuicaoPorMarcador.direita) {
+    atribEsq = atribuicaoPorMarcador.esquerda;
+    atribDir = atribuicaoPorMarcador.direita;
+  } else {
+    const resultado = atribuirQuestoesConjunto(linhasPorBloco.esquerda, linhasPorBloco.direita);
+    atribEsq = atribuicaoPorMarcador.esquerda || resultado.esquerda;
+    atribDir = atribuicaoPorMarcador.direita || resultado.direita;
+  }
 
   const grade = {};
   for (const idx in atribEsq) {

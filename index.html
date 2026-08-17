@@ -88,13 +88,26 @@
     color: white;
     box-shadow: 0 4px 10px rgba(47,123,255,0.28);
   }
-  video, #canvasCapturado {
+  #canvasCapturado {
     width: 100%;
     border-radius: 10px;
     background: #000;
     display: block;
   }
-  .video-wrap { position: relative; }
+  .video-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 210 / 297; /* proporcao real de folha A4 (retrato) */
+    overflow: hidden;
+    border-radius: 10px;
+    background: #000;
+  }
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover; /* corta o excesso dos lados, preenchendo o formato A4 */
+    display: block;
+  }
   .corner-bracket {
     position: absolute;
     width: 56px;

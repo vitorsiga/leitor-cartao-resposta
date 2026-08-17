@@ -779,28 +779,16 @@ async function dispararCapturaAutomatica() {
 }
 
 /* =========================================================================
-   Captura em alta qualidade: tenta usar a API ImageCapture, que pega a
-   FOTO real da camera (resolucao maxima do sensor), em vez de um quadro
-   do stream de video de previa (que roda numa resolucao bem mais baixa
-   para manter fluidez). Se o navegador nao suportar, cai de volta no
-   metodo antigo (desenhar o frame atual do <video>).
+   Captura: desenha o frame ATUAL do <video> de previa, em vez de usar a
+   API ImageCapture. Motivo: ImageCapture.takePhoto() em varios aparelhos
+   Android usa um campo de visao DIFERENTE (geralmente mais largo) do que
+   a previa ao vivo mostrada na tela -- isso faz a foto salva capturar
+   mais area ao redor do que o usuario viu e alinhou, fazendo o papel
+   parecer mais longe/menor do que na previa. Preferimos garantir que a
+   foto capturada seja EXATAMENTE o que a pessoa viu e alinhou na tela
+   (WYSIWYG), mesmo abrindo mao de um pouco de resolucao maxima.
    ========================================================================= */
 async function capturarQuadroAltaQualidade() {
-  const track = stream?.getVideoTracks()?.[0];
-  if (track && typeof window.ImageCapture === 'function') {
-    try {
-      const imageCapture = new ImageCapture(track);
-      const blob = await imageCapture.takePhoto();
-      const bitmap = await createImageBitmap(blob);
-      canvasCapturado.width = bitmap.width;
-      canvasCapturado.height = bitmap.height;
-      canvasCapturado.getContext('2d').drawImage(bitmap, 0, 0);
-      bitmap.close();
-      return true;
-    } catch (e) {
-      console.warn('ImageCapture indisponivel ou falhou, usando quadro do video como alternativa:', e);
-    }
-  }
   const w = video.videoWidth, h = video.videoHeight;
   if (!w || !h) return false;
   canvasCapturado.width = w;

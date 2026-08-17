@@ -359,6 +359,17 @@
 <main>
 
   <div class="card">
+    <label class="check" style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-weight:600;color:#16233d;">Quantidade de questões do cartão</span>
+      <select id="selectQtdQuestoes" style="font-family:inherit;font-size:0.9rem;padding:6px 10px;border-radius:8px;border:1px solid #d7dceb;">
+        <option value="10" selected>10</option>
+        <option value="20">20</option>
+        <option value="30">30</option>
+        <option value="40">40</option>
+        <option value="50">50</option>
+        <option value="60">60</option>
+      </select>
+    </label>
     <div class="modo-tabs">
       <button class="modo-btn ativo" id="btnModoCamera">📷 Usar câmera</button>
       <button class="modo-btn" id="btnModoArquivo">📁 Enviar arquivo</button>
@@ -1271,56 +1282,32 @@ function tentarDecodificarComMargem(warpedMat, regiao, margem) {
 
 /* =========================================================================
    4) DETECÇÃO DAS BOLHAS
-   A atribuicao de linha->questao usa CONSISTENCIA ENTRE OS DOIS BLOCOS:
-   como as questoes 1-5 e 6-10 ficam nas MESMAS linhas fisicas do cartao,
-   quando os dois blocos encontram a mesma quantidade de linhas, exige que
-   usem o MESMO deslocamento inicial (a mesma linha fisica esta faltando
-   ou presente nos dois lados) -- isso e muito mais confiavel do que uma
-   tabela fixa de calibracao em pixel, que se mostrou instavel entre fotos
-   diferentes (a escala exata da retificacao varia um pouco a cada foto).
-   A tabela abaixo so entra como criterio de desempate quando ha mais de
-   uma hipotese compativel entre os blocos.
+   Atribuicao de linha->questao GENERALIZADA para qualquer quantidade de
+   questoes (nao mais fixo em 5 por bloco). Usa os marcadores impressos
+   (quadrado/traco/losango/3-tracos/triangulo, que se repetem a cada 5
+   questoes) para ANCORAR a posicao absoluta de cada linha na coluna:
+   1) calcula o indice RELATIVO de cada linha em relacao a primeira,
+      usando o espacamento vertical medido (sem depender de marcador)
+   2) usa o primeiro marcador legivel para descobrir o indice ABSOLUTO
+      dessa linha (ex: se a 1a linha encontrada tem "3 tracos" = posicao
+      3 dentro do bloco, ela e a 4a questao da coluna, nao a 1a)
+   3) aplica esse deslocamento a todas as outras linhas
+   Validado contra foto real de cartao de 60 questoes (6 blocos de 5 por
+   coluna) -- generaliza naturalmente o caso de 10 questoes (1 bloco).
    ========================================================================= */
-const Y_REFERENCIA = {
-  esquerda: [560, 632, 710, 784, 858],
-  direita: [575, 649, 727, 802, 877],
-};
-const NUMEROS_QUESTAO = {
-  esquerda: [1, 2, 3, 4, 5],
-  direita: [6, 7, 8, 9, 10],
-};
-
-function gerarHipoteses(ys, k) {
-  if (k === 0) return [];
-  if (k === 5) return [[0, 1, 2, 3, 4]];
-  const gaps = [];
-  for (let i = 1; i < ys.length; i++) gaps.push(ys[i] - ys[i - 1]);
-  const gapsOrdenados = [...gaps].sort((a, b) => a - b);
-  const espacamentoMediano = gaps.length ? gapsOrdenados[Math.floor(gaps.length / 2)] : 74;
-
-  const hipoteses = [];
-  for (let slotInicial = 0; slotInicial <= 5 - k; slotInicial++) {
-    const slots = [slotInicial];
-    let valido = true;
-    for (const g of gaps) {
-      const passos = Math.max(1, Math.round(g / espacamentoMediano));
-      const proximo = slots[slots.length - 1] + passos;
-      if (proximo > 4) { valido = false; break; }
-      slots.push(proximo);
-    }
-    if (valido) hipoteses.push(slots);
-  }
-  return hipoteses;
+function gerarNumerosQuestao(totalQuestoes) {
+  const porColuna = totalQuestoes / 2;
+  const esquerda = [], direita = [];
+  for (let i = 1; i <= porColuna; i++) esquerda.push(i);
+  for (let i = porColuna + 1; i <= totalQuestoes; i++) direita.push(i);
+  return { esquerda, direita };
 }
 
-/* =========================================================================
-   DETECÇÃO DOS MARCADORES DE LINHA (layout novo do cartão)
-   ✅ VALIDADO contra foto real (10/10 marcadores classificados
-   corretamente nos dois blocos). Calibração: busca uma janela pequena
-   por LINHA JÁ DETECTADA (não uma banda ampla), posicionada de -165 a
-   -95px à esquerda da bolha "A" daquela linha -- offsets medidos
-   diretamente numa foto real impressa com este layout.
-   ========================================================================= */
+function obterTotalQuestoesSelecionado() {
+  const select = document.getElementById('selectQtdQuestoes');
+  const val = select ? parseInt(select.value, 10) : 10;
+  return (val && val > 0) ? val : 10;
+}
 
 // centroide de poligono via formula do shoelace -- usa so os vertices do
 // contorno, sem depender de cv.moments (incerteza de disponibilidade)
@@ -1413,66 +1400,54 @@ function posicaoPorFormas(formas) {
   return null;
 }
 
-function atribuirQuestoesConjunto(linhasEsq, linhasDir) {
-  const comY = (linhas) => linhas
-    .map(l => ({ linha: l, y: l.reduce((s, p) => s + p.y, 0) / l.length }))
+// Atribui indices absolutos (0-based) as linhas de UMA coluna, usando os
+// marcadores para ancorar (funciona para qualquer numero de blocos de 5,
+// nao so 1 bloco) -- ver explicacao completa no comentario acima.
+function atribuirQuestoesColuna(linhas, warpedGray) {
+  if (linhas.length === 0) return {};
+
+  const comY = linhas
+    .map(l => ({ linha: l, y: l.reduce((s, p) => s + p.y, 0) / l.length, xA: l[0].x }))
     .sort((a, b) => a.y - b.y);
 
-  const dadosEsq = comY(linhasEsq), dadosDir = comY(linhasDir);
-  const ysEsq = dadosEsq.map(d => d.y), ysDir = dadosDir.map(d => d.y);
-  const kEsq = ysEsq.length, kDir = ysDir.length;
-
-  const resultadoEsq = {}, resultadoDir = {};
-
-  if (kEsq === kDir && kEsq > 0) {
-    const hipEsq = gerarHipoteses(ysEsq, kEsq);
-    const hipDir = gerarHipoteses(ysDir, kDir);
-    const mapaEsq = {}; hipEsq.forEach(h => { mapaEsq[h[0]] = h; });
-    const mapaDir = {}; hipDir.forEach(h => { mapaDir[h[0]] = h; });
-    const comuns = Object.keys(mapaEsq).filter(k => k in mapaDir);
-
-    if (comuns.length > 0) {
-      let melhorErro = Infinity, melhorInicial = null;
-      for (const si of comuns) {
-        const slotsE = mapaEsq[si], slotsD = mapaDir[si];
-        let erro = 0;
-        for (let i = 0; i < kEsq; i++) erro += (ysEsq[i] - Y_REFERENCIA.esquerda[slotsE[i]]) ** 2;
-        for (let i = 0; i < kDir; i++) erro += (ysDir[i] - Y_REFERENCIA.direita[slotsD[i]]) ** 2;
-        if (erro < melhorErro) { melhorErro = erro; melhorInicial = si; }
-      }
-      const slotsE = mapaEsq[melhorInicial], slotsD = mapaDir[melhorInicial];
-      for (let i = 0; i < kEsq; i++) resultadoEsq[slotsE[i]] = dadosEsq[i].linha;
-      for (let i = 0; i < kDir; i++) resultadoDir[slotsD[i]] = dadosDir[i].linha;
-      return { esquerda: resultadoEsq, direita: resultadoDir };
-    }
+  if (comY.length === 1) {
+    // sem espacamento pra calcular indice relativo -- so aceita com
+    // marcador direto, assumindo o primeiro bloco (melhor palpite)
+    const formas = detectarMarcadorDaLinha(warpedGray, comY[0].xA, comY[0].y);
+    const pos = posicaoPorFormas(formas);
+    if (pos === null) return {};
+    return { [pos]: comY[0].linha };
   }
 
-  // fallback: quantidades diferentes entre os blocos (ou sem hipotese em
-  // comum) -- cada bloco usa a tabela de referencia de forma independente
-  const resolverIndependente = (ys, dados, nome, resultado) => {
-    const k = ys.length;
-    if (k === 0) return;
-    if (k === 1) {
-      let idx = 0, menorDist = Infinity;
-      for (let i = 0; i < Y_REFERENCIA[nome].length; i++) {
-        const d = Math.abs(ys[0] - Y_REFERENCIA[nome][i]);
-        if (d < menorDist) { menorDist = d; idx = i; }
-      }
-      resultado[idx] = dados[0].linha;
-      return;
+  const ys = comY.map(o => o.y);
+  const gaps = [];
+  for (let i = 1; i < ys.length; i++) gaps.push(ys[i] - ys[i - 1]);
+  const gapsOrdenados = [...gaps].sort((a, b) => a - b);
+  const espacamento = gapsOrdenados[Math.floor(gapsOrdenados.length / 2)];
+  if (!espacamento || espacamento <= 0) return {};
+
+  const indicesRelativos = ys.map(y => Math.round((y - ys[0]) / espacamento));
+
+  // busca o primeiro marcador legivel para ancorar o indice absoluto
+  let ancora = null;
+  const posPorLinha = new Array(comY.length).fill(null);
+  for (let i = 0; i < comY.length; i++) {
+    const formas = detectarMarcadorDaLinha(warpedGray, comY[i].xA, comY[i].y);
+    const pos = posicaoPorFormas(formas);
+    posPorLinha[i] = pos;
+    if (ancora === null && pos !== null) {
+      ancora = pos - indicesRelativos[i];
     }
-    const hipoteses = gerarHipoteses(ys, k);
-    let melhorErro = Infinity, melhorSlots = null;
-    for (const slots of hipoteses) {
-      let erro = 0;
-      for (let i = 0; i < k; i++) erro += (ys[i] - Y_REFERENCIA[nome][slots[i]]) ** 2;
-      if (erro < melhorErro) { melhorErro = erro; melhorSlots = slots; }
-    }
-    if (melhorSlots) for (let i = 0; i < k; i++) resultado[melhorSlots[i]] = dados[i].linha;
-  };
-  resolverIndependente(ysEsq, dadosEsq, 'esquerda', resultadoEsq);
-  resolverIndependente(ysDir, dadosDir, 'direita', resultadoDir);
-  return { esquerda: resultadoEsq, direita: resultadoDir };
+  }
+  if (ancora === null) return {}; // nenhum marcador legivel nessa coluna
+
+  const resultado = {};
+  for (let i = 0; i < comY.length; i++) {
+    const idxAbs = indicesRelativos[i] + ancora;
+    if (idxAbs < 0) continue; // ancora invalida, ignora essa linha
+    resultado[idxAbs] = comY[i].linha;
+  }
+  return resultado;
 }
 
 function detectarBolhas(warpedMat) {
@@ -1514,7 +1489,11 @@ function detectarBolhas(warpedMat) {
   // escala de retificacao um pouco diferente (ja aconteceu 3x neste
   // projeto). Deixa o agrupamento por proximidade (mais abaixo) descobrir
   // a estrutura real das 5 linhas, em vez de assumir onde elas estao.
-  const y0 = 150, y1 = 1700;
+  // y1 ampliado bastante para caber ate 30 linhas por coluna (cartao de
+  // 60 questoes, 6 blocos de 5) -- 30 linhas a ~78px de espacamento
+  // precisam de ~2340px, entao y1=2600 da folga confortavel mantendo
+  // margem segura antes dos cantos inferiores (~y=2900+)
+  const y0 = 150, y1 = 2600;
   const LETRAS = ['A', 'B', 'C', 'D', 'E'];
   const linhasPorBloco = {};
 
@@ -1630,67 +1609,38 @@ function detectarBolhas(warpedMat) {
     linhasPorBloco[nome] = removerLinhasIsoladas(linhasValidas);
   }
 
-  // ✅ Deteccao por marcadores VALIDADA contra foto real (10/10 correto).
-  // Para cada linha ja confirmada por Hough, busca o marcador numa janela
-  // pequena calibrada relativa a bolha "A" daquela linha especifica --
-  // muito mais preciso que buscar numa banda ampla do bloco inteiro.
-  // So usa o resultado se TODAS as linhas do bloco tiverem marcador
-  // reconhecido e as posicoes forem unicas (sem duplicar); caso
-  // contrario, cai no metodo antigo (espacamento + consistencia).
-  const atribuicaoPorMarcador = { esquerda: null, direita: null };
-  for (const nome in blocos) {
-    const linhasValidas = linhasPorBloco[nome];
-    if (linhasValidas.length === 0) continue;
+  // Atribuicao GENERALIZADA por coluna (nao mais limitada a 5 questoes):
+  // ancora usando o primeiro marcador legivel de cada coluna, depois usa
+  // o espacamento vertical para derivar o indice absoluto das demais.
+  const totalQuestoes = obterTotalQuestoesSelecionado();
+  const numerosQuestao = gerarNumerosQuestao(totalQuestoes);
 
-    const mapa = {};
-    let consistente = true;
-    for (const linha of linhasValidas) {
-      const xColunaA = linha[0].x; // linha ja ordenada por X (A primeiro)
-      const yLinha = linha.reduce((s, p) => s + p.y, 0) / linha.length;
-      const formas = detectarMarcadorDaLinha(gray, xColunaA, yLinha);
-      const pos = posicaoPorFormas(formas);
-      if (pos === null || pos in mapa) { consistente = false; break; }
-      mapa[pos] = linha;
-    }
-    if (consistente && Object.keys(mapa).length === linhasValidas.length) {
-      atribuicaoPorMarcador[nome] = mapa;
-    }
-  }
-
-  let atribEsq, atribDir;
-  if (atribuicaoPorMarcador.esquerda && atribuicaoPorMarcador.direita) {
-    atribEsq = atribuicaoPorMarcador.esquerda;
-    atribDir = atribuicaoPorMarcador.direita;
-  } else {
-    const resultado = atribuirQuestoesConjunto(linhasPorBloco.esquerda, linhasPorBloco.direita);
-    atribEsq = atribuicaoPorMarcador.esquerda || resultado.esquerda;
-    atribDir = atribuicaoPorMarcador.direita || resultado.direita;
-  }
+  const atribEsq = atribuirQuestoesColuna(linhasPorBloco.esquerda, gray);
+  const atribDir = atribuirQuestoesColuna(linhasPorBloco.direita, gray);
 
   const grade = {};
   for (const idx in atribEsq) {
-    const q = NUMEROS_QUESTAO.esquerda[idx];
+    const q = numerosQuestao.esquerda[idx];
+    if (q === undefined) continue; // indice fora do range esperado, ignora
     grade[q] = atribEsq[idx].map((p, i) => ({ letra: LETRAS[i], x: p.x, y: p.y, r: p.r }));
   }
   for (const idx in atribDir) {
-    const q = NUMEROS_QUESTAO.direita[idx];
+    const q = numerosQuestao.direita[idx];
+    if (q === undefined) continue;
     grade[q] = atribDir[idx].map((p, i) => ({ letra: LETRAS[i], x: p.x, y: p.y, r: p.r }));
   }
 
-  // DIAGNOSTICO TEMPORARIO: guarda dados de cada etapa para investigar
-  // discrepancias entre o que acontece no navegador (WASM) e testes
-  // feitos fora dele. Exposto em window.__debugOMR para poder ser
-  // copiado e enviado para analise quando o resultado sair errado.
+  // DIAGNOSTICO: guarda dados de cada etapa para investigar discrepancias
   window.__debugOMR = {
+    totalQuestoes,
     linhasPorBloco: {
       esquerda: linhasPorBloco.esquerda.map(l => Math.round(l.reduce((s, p) => s + p.y, 0) / l.length)),
       direita: linhasPorBloco.direita.map(l => Math.round(l.reduce((s, p) => s + p.y, 0) / l.length)),
     },
-    marcadoresConsistentes: {
-      esquerda: !!atribuicaoPorMarcador.esquerda,
-      direita: !!atribuicaoPorMarcador.direita,
+    questoesIdentificadas: {
+      esquerda: Object.keys(atribEsq).map(Number).sort((a,b)=>a-b),
+      direita: Object.keys(atribDir).map(Number).sort((a,b)=>a-b),
     },
-    usouMarcador: !!(atribuicaoPorMarcador.esquerda && atribuicaoPorMarcador.direita),
   };
 
   gray.delete(); blur.delete();
@@ -1767,7 +1717,8 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
 
   let acertos = 0, totalComparado = 0;
   let linhasTabela = '';
-  for (let q = 1; q <= 10; q++) {
+  const totalQuestoesResultado = obterTotalQuestoesSelecionado();
+  for (let q = 1; q <= totalQuestoesResultado; q++) {
     const marcada = respostas[q];
     const ambigua = ambiguas.has(String(q));
     let badgeClass = marcada ? 'marcada' : 'vazia';
@@ -1798,7 +1749,7 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
   // reordenacao automatica de chaves numericas do JavaScript ("10" antes
   // de "01") e ficar mais facil de iterar no PHP (foreach)
   const respostasArray = [];
-  for (let q = 1; q <= 10; q++) {
+  for (let q = 1; q <= totalQuestoesResultado; q++) {
     const numQ = String(q).padStart(2, '0');
     respostasArray.push({
       questao: numQ,

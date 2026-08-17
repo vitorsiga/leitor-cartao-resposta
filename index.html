@@ -1489,7 +1489,11 @@ function detectarBolhas(warpedMat) {
     esquerda: [100, 820],
     direita: [870, 1650],
   };
-  const y0 = 170, y1 = 830;
+  // y1 ampliado (era 830) -- em fotos onde a retificacao produz uma escala
+  // um pouco diferente, a 5a linha de cada bloco pode ficar mais baixa do
+  // que a faixa antiga cobria (confirmado: uma foto real tinha a linha 5
+  // em y=888, fora do limite antigo de 830, ficando impossivel de achar)
+  const y0 = 170, y1 = 980;
   const LETRAS = ['A', 'B', 'C', 'D', 'E'];
   const linhasPorBloco = {};
 

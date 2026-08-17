@@ -659,8 +659,9 @@ function verificarCantosAoVivo() {
   liveCheckRodando = true;
 
   try {
-    const escala = 480 / video.videoWidth;
-    liveCanvas.width = 480;
+    const procW = 480;
+    const escala = procW / video.videoWidth;
+    liveCanvas.width = procW;
     liveCanvas.height = Math.round(video.videoHeight * escala);
     const ctx = liveCanvas.getContext('2d');
     ctx.drawImage(video, 0, 0, liveCanvas.width, liveCanvas.height);
@@ -669,7 +670,7 @@ function verificarCantosAoVivo() {
     const cantosParciais = detectarCantosParcial(src);
     src.delete();
 
-    atualizarIndicadorCantos(cantosParciais);
+    atualizarIndicadorCantos(cantosParciais, procW);
   } catch (e) {
     // falha silenciosa no check ao vivo -- nao interrompe a experiencia
     console.warn('Verificacao ao vivo falhou:', e);
@@ -678,14 +679,64 @@ function verificarCantosAoVivo() {
   }
 }
 
-function atualizarIndicadorCantos(cantos) {
+/* =========================================================================
+   Converte uma coordenada do frame de processamento (reduzido, ex: 480px
+   de largura) para a posicao correspondente na TELA (dentro da caixa
+   exibida do video, ja considerando o corte feito pelo object-fit:cover) --
+   assim os cantos detectados aparecem exatamente onde o papel realmente
+   esta, em vez de um alvo fixo generico.
+   ========================================================================= */
+function mapearParaTela(px, py, procW) {
+  const escalaNativa = video.videoWidth / procW;
+  const nx = px * escalaNativa;
+  const ny = py * escalaNativa;
+
+  const wrapW = video.clientWidth, wrapH = video.clientHeight;
+  if (!wrapW || !wrapH || !video.videoWidth || !video.videoHeight) return null;
+
+  const scale = Math.max(wrapW / video.videoWidth, wrapH / video.videoHeight);
+  const cropX = (video.videoWidth * scale - wrapW) / 2 / scale;
+  const cropY = (video.videoHeight * scale - wrapH) / 2 / scale;
+
+  return { x: (nx - cropX) * scale, y: (ny - cropY) * scale };
+}
+
+function posicionarCantoCentro(id, x, y) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const metade = (el.offsetWidth || 56) / 2;
+  el.style.left = (x - metade) + 'px';
+  el.style.top = (y - metade) + 'px';
+  el.style.right = '';
+  el.style.bottom = '';
+}
+
+function atualizarIndicadorCantos(cantos, procW) {
   const brackets = { top_left: 'cornerTL', top_right: 'cornerTR', bottom_left: 'cornerBL', bottom_right: 'cornerBR' };
+  const posicoesPadrao = {
+    top_left: { top: guiaA4Atual?.top, left: guiaA4Atual?.left },
+    top_right: { top: guiaA4Atual?.top, right: guiaA4Atual?.right },
+    bottom_left: { bottom: guiaA4Atual?.bottom, left: guiaA4Atual?.left },
+    bottom_right: { bottom: guiaA4Atual?.bottom, right: guiaA4Atual?.right },
+  };
+
   let count = 0;
   for (const nome in brackets) {
+    const id = brackets[nome];
     const encontrado = !!cantos[nome];
-    if (encontrado) count++;
-    const el = document.getElementById(brackets[nome]);
-    if (el) el.classList.toggle('ok', encontrado);
+    const el = document.getElementById(id);
+    if (!el) continue;
+
+    if (encontrado) {
+      count++;
+      const pos = mapearParaTela(cantos[nome].cx, cantos[nome].cy, procW);
+      if (pos) posicionarCantoCentro(id, pos.x, pos.y);
+      el.classList.add('ok');
+    } else {
+      // sem deteccao: volta pro alvo generico (dica de onde posicionar)
+      if (guiaA4Atual) posicionarCanto(id, posicoesPadrao[nome]);
+      el.classList.remove('ok');
+    }
   }
 
   const textoEl = document.getElementById('textoCantos');

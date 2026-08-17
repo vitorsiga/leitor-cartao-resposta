@@ -509,7 +509,7 @@ async function iniciarCamera() {
   try {
     pararCamera();
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1080 }, height: { ideal: 1920 } }
+      video: { facingMode: 'environment', width: { ideal: 2160 }, height: { ideal: 3840 } }
     });
     video.srcObject = stream;
     await new Promise(resolve => {
@@ -771,15 +771,42 @@ function atualizarIndicadorCantos(cantos, procW) {
   }
 }
 
-function dispararCapturaAutomatica() {
-  const w = video.videoWidth, h = video.videoHeight;
-  if (!w || !h) { capturaAutomaticaDisparada = false; return; }
-  canvasCapturado.width = w;
-  canvasCapturado.height = h;
-  const ctx = canvasCapturado.getContext('2d');
-  ctx.drawImage(video, 0, 0, w, h);
+async function dispararCapturaAutomatica() {
+  const capturouComSucesso = await capturarQuadroAltaQualidade();
+  if (!capturouComSucesso) { capturaAutomaticaDisparada = false; return; }
   pararCamera();
   processarImagemCapturada();
+}
+
+/* =========================================================================
+   Captura em alta qualidade: tenta usar a API ImageCapture, que pega a
+   FOTO real da camera (resolucao maxima do sensor), em vez de um quadro
+   do stream de video de previa (que roda numa resolucao bem mais baixa
+   para manter fluidez). Se o navegador nao suportar, cai de volta no
+   metodo antigo (desenhar o frame atual do <video>).
+   ========================================================================= */
+async function capturarQuadroAltaQualidade() {
+  const track = stream?.getVideoTracks()?.[0];
+  if (track && typeof window.ImageCapture === 'function') {
+    try {
+      const imageCapture = new ImageCapture(track);
+      const blob = await imageCapture.takePhoto();
+      const bitmap = await createImageBitmap(blob);
+      canvasCapturado.width = bitmap.width;
+      canvasCapturado.height = bitmap.height;
+      canvasCapturado.getContext('2d').drawImage(bitmap, 0, 0);
+      bitmap.close();
+      return true;
+    } catch (e) {
+      console.warn('ImageCapture indisponivel ou falhou, usando quadro do video como alternativa:', e);
+    }
+  }
+  const w = video.videoWidth, h = video.videoHeight;
+  if (!w || !h) return false;
+  canvasCapturado.width = w;
+  canvasCapturado.height = h;
+  canvasCapturado.getContext('2d').drawImage(video, 0, 0, w, h);
+  return true;
 }
 
 document.getElementById('btnCapturar').onclick = () => {
@@ -945,6 +972,39 @@ function detectarPapel(src) {
    porque essa constante pode nao estar disponivel em todas as builds do
    OpenCV.js.
    ========================================================================= */
+/* =========================================================================
+   REALCE DE CONTRASTE (alargamento por percentil)
+   Estica o histograma de cinza entre o percentil 2% e 98%, evitando que
+   fotos com pouco contraste (ex: exposicao automatica da camera deixando
+   tudo num cinza medio) prejudiquem a deteccao de cantos, bolhas e QR.
+   Modifica a Mat em memoria diretamente (mais rapido que criar uma nova).
+   ========================================================================= */
+function melhorarContraste(matGray) {
+  const data = matGray.data;
+  const hist = new Array(256).fill(0);
+  for (let i = 0; i < data.length; i++) hist[data[i]]++;
+  const total = data.length;
+
+  const alvoMin = total * 0.02, alvoMax = total * 0.98;
+  let acumulado = 0, pMin = 0, pMax = 255;
+  for (let t = 0; t < 256; t++) {
+    acumulado += hist[t];
+    if (acumulado >= alvoMin) { pMin = t; break; }
+  }
+  acumulado = 0;
+  for (let t = 255; t >= 0; t--) {
+    acumulado += hist[t];
+    if (acumulado >= (total - alvoMax)) { pMax = t; break; }
+  }
+  if (pMax <= pMin) return; // imagem ja uniforme, nada a fazer
+
+  const scale = 255 / (pMax - pMin);
+  for (let i = 0; i < data.length; i++) {
+    const v = (data[i] - pMin) * scale;
+    data[i] = v < 0 ? 0 : (v > 255 ? 255 : v);
+  }
+}
+
 function computarLimiarOtsu(matGray) {
   const hist = new Array(256).fill(0);
   const data = matGray.data;
@@ -976,6 +1036,7 @@ function detectarCantosParcial(src) {
 
   const gray = new cv.Mat();
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  melhorarContraste(gray);
 
   const regioes = {
     top_left:     [0.00, 0.15, 0.00, 0.12],
@@ -1249,6 +1310,7 @@ function atribuirQuestoes(linhasValidas, yReferencia) {
 function detectarBolhas(warpedMat) {
   const gray = new cv.Mat();
   cv.cvtColor(warpedMat, gray, cv.COLOR_RGBA2GRAY);
+  melhorarContraste(gray);
 
   // mascara do QR: usa a mesma localizacao DINAMICA da leitura do QR
   // (nao coordenadas fixas), com margem pequena para nao apagar bolhas

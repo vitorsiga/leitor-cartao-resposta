@@ -928,10 +928,20 @@ function detectarPapel(src) {
   const threshPapel = new cv.Mat();
   cv.threshold(gray, threshPapel, 150, 255, cv.THRESH_BINARY);
 
+  // ABERTURA primeiro: remove pontinhos de ruido/reflexo da mesa (que
+  // poderiam ficar mais claros que o limiar por acaso), ANTES do
+  // fechamento -- sem isso, o fechamento (kernel grande) pode "colar"
+  // esses pontinhos de ruido ao papel, esticando o retangulo detectado
+  // ate a borda da foto mesmo quando o papel de verdade e bem menor
+  const kernelAbertura = cv.Mat.ones(9, 9, cv.CV_8U);
+  const aberto = new cv.Mat();
+  cv.morphologyEx(threshPapel, aberto, cv.MORPH_OPEN, kernelAbertura);
+
   // fecha buracos (texto, QR code) para o papel virar um blob solido
   const kernel = cv.Mat.ones(25, 25, cv.CV_8U);
   const fechado = new cv.Mat();
-  cv.morphologyEx(threshPapel, fechado, cv.MORPH_CLOSE, kernel);
+  cv.morphologyEx(aberto, fechado, cv.MORPH_CLOSE, kernel);
+  kernelAbertura.delete(); aberto.delete();
 
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();

@@ -874,11 +874,17 @@ async function processarImagemCapturada() {
     const cantos = detectarCantos(src);
     if (!cantos) {
       src.delete();
+      const dicaFundo = window.__fundoSuspeito
+        ? '<br><br>💡 <b>Possível causa específica:</b> o fundo atrás do papel parece claro/branco (mesa ou parede), fazendo o papel se confundir com o fundo. ' +
+          'Tente fotografar sobre uma superfície <b>escura</b> (mesa de madeira escura, tecido preto, chão escuro) -- isso ajuda bastante o sistema a encontrar os cantos.'
+        : '';
       mostrarErro(
         '⚠️ Não foi possível localizar os 4 marcadores de canto do cartão.<br><br>' +
-        'Dicas: aproxime a câmera, garanta boa iluminação e verifique se nenhum dedo está cobrindo os cantos pretos da folha.',
+        'Dicas: aproxime a câmera, garanta boa iluminação e verifique se nenhum dedo está cobrindo os cantos pretos da folha.' +
+        dicaFundo,
         true
       );
+      window.__fundoSuspeito = false;
       return;
     }
 
@@ -961,6 +967,14 @@ function detectarPapel(src) {
 
   gray.delete(); threshPapel.delete(); kernel.delete(); fechado.delete();
   contours.delete(); hierarchy.delete();
+
+  // sinaliza quando o retangulo encontrado ocupa quase a imagem inteira --
+  // forte indicio de que o fundo (mesa/parede clara) se fundiu com o
+  // papel no limiar de brilho, em vez de ser o papel de verdade
+  if (melhorRect) {
+    const areaRelativa = (melhorRect.width * melhorRect.height) / (w * h);
+    window.__fundoSuspeito = areaRelativa > 0.85;
+  }
 
   return melhorRect; // {x, y, width, height} ou null
 }

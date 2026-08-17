@@ -1210,8 +1210,22 @@ function lerQRCodeDoWarped(warpedMat) {
     return null;
   }
 
-  // acrescenta margem de seguranca ao redor da regiao localizada
-  const margem = 40;
+  // O jsQR e sensivel de forma nao-linear ao tamanho exato do recorte --
+  // uma margem que falha numa foto pode funcionar perfeitamente noutra
+  // (confirmado empiricamente: a mesma regiao QR decodifica com margem de
+  // 20px mas falha com 40px, dependendo de como a grade do QR se alinha
+  // no recorte). Por isso tentamos VARIAS margens em sequencia, em vez de
+  // confiar numa unica -- e rapido (jsQR e leve) e muito mais robusto.
+  const margensParaTentar = [20, 35, 10, 50, 65, 0];
+
+  for (const margem of margensParaTentar) {
+    const resultado = tentarDecodificarComMargem(warpedMat, regiao, margem);
+    if (resultado) return resultado;
+  }
+  return null;
+}
+
+function tentarDecodificarComMargem(warpedMat, regiao, margem) {
   const x = Math.max(0, regiao.x - margem);
   const y = Math.max(0, regiao.y - margem);
   const w = Math.min(regiao.w + margem * 2, warpedMat.cols - x);
@@ -1223,7 +1237,6 @@ function lerQRCodeDoWarped(warpedMat) {
     const rect = new cv.Rect(x, y, w, h);
     roiMat = warpedMat.roi(rect);
   } catch (e) {
-    console.error('Erro ao recortar regiao do QR:', e);
     return null;
   }
 

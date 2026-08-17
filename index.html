@@ -1662,6 +1662,22 @@ function detectarBolhas(warpedMat) {
     grade[q] = atribDir[idx].map((p, i) => ({ letra: LETRAS[i], x: p.x, y: p.y, r: p.r }));
   }
 
+  // DIAGNOSTICO TEMPORARIO: guarda dados de cada etapa para investigar
+  // discrepancias entre o que acontece no navegador (WASM) e testes
+  // feitos fora dele. Exposto em window.__debugOMR para poder ser
+  // copiado e enviado para analise quando o resultado sair errado.
+  window.__debugOMR = {
+    linhasPorBloco: {
+      esquerda: linhasPorBloco.esquerda.map(l => Math.round(l.reduce((s, p) => s + p.y, 0) / l.length)),
+      direita: linhasPorBloco.direita.map(l => Math.round(l.reduce((s, p) => s + p.y, 0) / l.length)),
+    },
+    marcadoresConsistentes: {
+      esquerda: !!atribuicaoPorMarcador.esquerda,
+      direita: !!atribuicaoPorMarcador.direita,
+    },
+    usouMarcador: !!(atribuicaoPorMarcador.esquerda && atribuicaoPorMarcador.direita),
+  };
+
   gray.delete(); blur.delete();
   return grade;
 }
@@ -1779,6 +1795,7 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
     qrcode: qrTexto || null,
     respostas: respostasArray,
     tempo_processamento_ms: Math.round(elapsedMs),
+    _debug: window.__debugOMR || null,
   };
   const jsonTexto = JSON.stringify(jsonResultado, null, 2);
 

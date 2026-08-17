@@ -811,8 +811,27 @@ function mostrarStatus(msg) {
   areaResultado.innerHTML = `<div class="card"><div class="status"><div class="spinner"></div>${msg}</div></div>`;
 }
 
-function mostrarErro(msg) {
-  areaResultado.innerHTML = `<div class="card"><div class="erro-box">${msg}</div></div>`;
+function mostrarErro(msg, comBotaoDownload) {
+  const botaoHtml = comBotaoDownload
+    ? `<button class="btn-secundario" id="btnBaixarFoto" style="margin-top:10px;">📥 Baixar foto original (para diagnóstico)</button>`
+    : '';
+  areaResultado.innerHTML = `<div class="card"><div class="erro-box">${msg}</div>${botaoHtml}</div>`;
+  if (comBotaoDownload) {
+    document.getElementById('btnBaixarFoto').onclick = baixarFotoOriginal;
+  }
+}
+
+function baixarFotoOriginal() {
+  canvasCapturado.toBlob((blob) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cartao_diagnostico_${Date.now()}.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }, 'image/jpeg', 0.95);
 }
 
 async function processarImagemCapturada() {
@@ -841,7 +860,8 @@ async function processarImagemCapturada() {
       src.delete();
       mostrarErro(
         '⚠️ Não foi possível localizar os 4 marcadores de canto do cartão.<br><br>' +
-        'Dicas: aproxime a câmera, garanta boa iluminação e verifique se nenhum dedo está cobrindo os cantos pretos da folha.'
+        'Dicas: aproxime a câmera, garanta boa iluminação e verifique se nenhum dedo está cobrindo os cantos pretos da folha.',
+        true
       );
       return;
     }

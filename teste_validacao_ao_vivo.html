@@ -38,24 +38,29 @@
   .json-box {
     background:#0b1f3a; color:#9fd8b0; padding:12px; border-radius:9px;
     font-family:monospace; font-size:0.72rem; line-height:1.45; white-space:pre; overflow-x:auto; margin:0;
-    max-height: 220px; overflow-y:auto;
+    max-height: 320px; overflow-y:auto;
   }
   .badge-modo { display:inline-block; padding:3px 9px; border-radius:6px; background:#eef2fb; color:#2f4570; font-size:0.7rem; font-weight:700; margin-left:6px; }
   .aviso { background:#fff6e0; color:#8a6400; padding:10px 12px; border-radius:9px; font-size:0.78rem; line-height:1.4; margin-bottom:12px; }
+  .aviso-ok { background:#e4f8ee; color:#0f6b3e; padding:10px 12px; border-radius:9px; font-size:0.78rem; line-height:1.4; margin-bottom:12px; }
 </style>
 </head>
 <body>
 
 <header>
   <h1>⚡ Teste de Performance — Validação ao Vivo</h1>
-  <p>Roda o pipeline completo (cantos + QR + bolhas) direto no vídeo, com taxa configurável</p>
+  <p>Roda o pipeline COMPLETO E ATUALIZADO (cantos + QR + marcadores + bolhas, 10-60 questões) direto no vídeo</p>
 </header>
 
 <main>
+  <div class="aviso-ok">
+    ✅ Sincronizado com o app principal: threshold Otsu adaptativo, contraste, marcadores
+    de linha/bloco, atribuição generalizada (10-60 questões), filtros de linha espúria e
+    resgate de subconjunto. Serve pra medir desempenho real com o pipeline de verdade.
+  </div>
   <div class="aviso">
-    ⚠️ Isto é um experimento de bancada, separado do leitor principal — serve só pra medir
-    desempenho real. Se o celular esquentar ou travar, reduza a frequência ou aumente o
-    intervalo abaixo.
+    ⚠️ Experimento de bancada, separado do leitor principal. Se o celular esquentar ou
+    travar, reduza a frequência ou aumente o intervalo abaixo.
   </div>
 
   <div class="card">
@@ -65,6 +70,17 @@
     </div>
 
     <div class="controles">
+      <div class="linha-controle">
+        <label>Quantidade de questões do cartão</label>
+        <select id="selectQtdQuestoes">
+          <option value="10" selected>10</option>
+          <option value="20">20</option>
+          <option value="30">30</option>
+          <option value="40">40</option>
+          <option value="50">50</option>
+          <option value="60">60</option>
+        </select>
+      </div>
       <div class="linha-controle">
         <label>Frequência de processamento</label>
         <select id="selectModo">
@@ -230,6 +246,7 @@ async function processarFrameAoVivo() {
   if (!cvReady || !video.videoWidth) return;
   processing = true;
   const t0 = performance.now();
+  const totalQuestoesAlvo = obterTotalQuestoesSelecionado();
 
   try {
     const resAlvo = parseInt(document.getElementById('selectResolucao').value, 10);
@@ -253,17 +270,19 @@ async function processarFrameAoVivo() {
       const warped = corrigirPerspectiva(src, nomes.map(n => cantos[n]));
       const qrTexto = lerQRCodeDoWarped(warped);
       const grade = detectarBolhas(warped);
-      const totalQuestoes = Object.keys(grade).length;
+      const totalQuestoesAchadas = Object.keys(grade).length;
 
-      if (totalQuestoes >= 1) {
+      if (totalQuestoesAchadas >= 1) {
         const { respostas, ambiguas } = lerRespostas(warped, grade);
         resultado = {
           completo: true,
           qrcode: qrTexto || null,
-          questoes_detectadas: totalQuestoes,
+          questoes_alvo: totalQuestoesAlvo,
+          questoes_detectadas: totalQuestoesAchadas,
           respostas: Object.keys(respostas).sort((a, b) => a - b).map(q => ({
             questao: String(q).padStart(2, '0'),
             resposta: respostas[q] || null,
+            ambigua: ambiguas.has(String(q)),
           })),
         };
       }
@@ -281,7 +300,7 @@ async function processarFrameAoVivo() {
     document.getElementById('jsonAoVivo').textContent = JSON.stringify(resultado, null, 2);
     document.getElementById('statusLinha').textContent =
       resultado.completo
-        ? `✅ Leitura completa (${resultado.questoes_detectadas}/10 questões)`
+        ? `✅ Leitura completa (${resultado.questoes_detectadas}/${totalQuestoesAlvo} questões)`
         : `Cantos visíveis: ${resultado.cantos_detectados}/4`;
 
   } catch (e) {
@@ -300,35 +319,116 @@ function atualizarHUD(elapsedMs) {
   document.getElementById('hudTaxaReal').textContent = (1000 / media).toFixed(1);
 }
 
+/* =========================================================================
+   FUNÇÕES DE VISÃO — copiadas DIRETO do app principal (mesma versão),
+   incluindo: threshold Otsu adaptativo, contraste por percentil, abertura
+   morfológica antes do fechamento, marcadores de linha (quadrado/traço/
+   losango/3-traços/triângulo), atribuição generalizada por coluna com
+   ancoragem incremental, filtro de linha isolada e resgate de subconjunto
+   de 5 pontos. Ver leitor_cartao_resposta.html para os comentários
+   completos de cada decisão de design.
+   ========================================================================= */
+
+function melhorarContraste(matGray) {
+  const data = matGray.data;
+  const hist = new Array(256).fill(0);
+  for (let i = 0; i < data.length; i++) hist[data[i]]++;
+  const total = data.length;
+
+  const alvoMin = total * 0.02, alvoMax = total * 0.98;
+  let acumulado = 0, pMin = 0, pMax = 255;
+  for (let t = 0; t < 256; t++) {
+    acumulado += hist[t];
+    if (acumulado >= alvoMin) { pMin = t; break; }
+  }
+  acumulado = 0;
+  for (let t = 255; t >= 0; t--) {
+    acumulado += hist[t];
+    if (acumulado >= (total - alvoMax)) { pMax = t; break; }
+  }
+  if (pMax <= pMin) return; // imagem ja uniforme, nada a fazer
+
+  const scale = 255 / (pMax - pMin);
+  for (let i = 0; i < data.length; i++) {
+    const v = (data[i] - pMin) * scale;
+    data[i] = v < 0 ? 0 : (v > 255 ? 255 : v);
+  }
+}
+
+function computarLimiarOtsu(matGray) {
+  const hist = new Array(256).fill(0);
+  const data = matGray.data;
+  for (let i = 0; i < data.length; i++) hist[data[i]]++;
+  const total = data.length;
+
+  let somaTotal = 0;
+  for (let t = 0; t < 256; t++) somaTotal += t * hist[t];
+
+  let somaAcumulada = 0, pesoFundo = 0, maiorVariancia = 0, limiar = 127;
+  for (let t = 0; t < 256; t++) {
+    pesoFundo += hist[t];
+    if (pesoFundo === 0) continue;
+    const pesoFrente = total - pesoFundo;
+    if (pesoFrente === 0) break;
+    somaAcumulada += t * hist[t];
+    const mediaFundo = somaAcumulada / pesoFundo;
+    const mediaFrente = (somaTotal - somaAcumulada) / pesoFrente;
+    const variancia = pesoFundo * pesoFrente * (mediaFundo - mediaFrente) * (mediaFundo - mediaFrente);
+    if (variancia > maiorVariancia) { maiorVariancia = variancia; limiar = t; }
+  }
+  return limiar;
+}
+
 function detectarPapel(src) {
+  const w = src.cols, h = src.rows;
   const gray = new cv.Mat();
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
   const threshPapel = new cv.Mat();
   cv.threshold(gray, threshPapel, 150, 255, cv.THRESH_BINARY);
+
+  // ABERTURA primeiro: remove pontinhos de ruido/reflexo da mesa (que
+  // poderiam ficar mais claros que o limiar por acaso), ANTES do
+  // fechamento -- sem isso, o fechamento (kernel grande) pode "colar"
+  // esses pontinhos de ruido ao papel, esticando o retangulo detectado
+  // ate a borda da foto mesmo quando o papel de verdade e bem menor
+  const kernelAbertura = cv.Mat.ones(9, 9, cv.CV_8U);
+  const aberto = new cv.Mat();
+  cv.morphologyEx(threshPapel, aberto, cv.MORPH_OPEN, kernelAbertura);
+
+  // fecha buracos (texto, QR code) para o papel virar um blob solido
   const kernel = cv.Mat.ones(25, 25, cv.CV_8U);
   const fechado = new cv.Mat();
-  cv.morphologyEx(threshPapel, fechado, cv.MORPH_CLOSE, kernel);
+  cv.morphologyEx(aberto, fechado, cv.MORPH_CLOSE, kernel);
+  kernelAbertura.delete(); aberto.delete();
+
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
   cv.findContours(fechado, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
   let maiorArea = 0, melhorRect = null;
   for (let i = 0; i < contours.size(); i++) {
     const cnt = contours.get(i);
     const area = cv.contourArea(cnt);
-    if (area > maiorArea) { maiorArea = area; melhorRect = cv.boundingRect(cnt); }
+    if (area > maiorArea) {
+      maiorArea = area;
+      melhorRect = cv.boundingRect(cnt);
+    }
     cnt.delete();
   }
+
   gray.delete(); threshPapel.delete(); kernel.delete(); fechado.delete();
   contours.delete(); hierarchy.delete();
-  return melhorRect;
-}
 
-const REGIOES_METRICA = {
-  top_left: (p) => p.x + p.y,
-  top_right: (p) => -p.x + p.y,
-  bottom_left: (p) => p.x - p.y,
-  bottom_right: (p) => -p.x - p.y,
-};
+  // sinaliza quando o retangulo encontrado ocupa quase a imagem inteira --
+  // forte indicio de que o fundo (mesa/parede clara) se fundiu com o
+  // papel no limiar de brilho, em vez de ser o papel de verdade
+  if (melhorRect) {
+    const areaRelativa = (melhorRect.width * melhorRect.height) / (w * h);
+    window.__fundoSuspeito = areaRelativa > 0.85;
+  }
+
+  return melhorRect; // {x, y, width, height} ou null
+}
 
 function detectarCantosParcial(src) {
   const papel = detectarPapel(src);
@@ -337,15 +437,24 @@ function detectarCantosParcial(src) {
 
   const gray = new cv.Mat();
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  const thresh = new cv.Mat();
-  cv.threshold(gray, thresh, 70, 255, cv.THRESH_BINARY_INV);
+  melhorarContraste(gray);
 
   const regioes = {
-    top_left: [0.00, 0.15, 0.00, 0.12],
-    top_right: [0.85, 1.00, 0.00, 0.12],
-    bottom_left: [0.00, 0.15, 0.75, 1.00],
+    top_left:     [0.00, 0.15, 0.00, 0.12],
+    top_right:    [0.85, 1.00, 0.00, 0.12],
+    bottom_left:  [0.00, 0.15, 0.75, 1.00],
     bottom_right: [0.85, 1.00, 0.75, 1.00],
   };
+  // para cada canto, a direcao do ponto extremo que representa a ponta real
+  // do canto do papel (nao o centro do blob do marcador)
+  const REGIOES_METRICA = {
+    top_left:     (p) => p.x + p.y,
+    top_right:    (p) => -p.x + p.y,
+    bottom_left:  (p) => p.x - p.y,
+    bottom_right: (p) => -p.x - p.y,
+  };
+
+  // regioes agora relativas ao retangulo do PAPEL, nao a foto inteira
   const areaMinima = 0.0004 * pw * ph;
   const cantos = {};
 
@@ -358,47 +467,79 @@ function detectarCantosParcial(src) {
     if (rectX1 <= rectX0 || rectY1 <= rectY0) continue;
 
     const rect = new cv.Rect(rectX0, rectY0, rectX1 - rectX0, rectY1 - rectY0);
-    const roi = thresh.roi(rect);
+    const roiGray = gray.roi(rect);
+
+    // threshold adaptativo (Otsu manual), calculado PARA ESSA regiao
+    // especifica -- se ajusta sozinho a foto com exposicao/contraste
+    // diferentes, em vez de depender de um valor fixo
+    const limiar = computarLimiarOtsu(roiGray);
+    const roi = new cv.Mat();
+    cv.threshold(roiGray, roi, limiar, 255, cv.THRESH_BINARY_INV);
+    roiGray.delete();
+
     const contours = new cv.MatVector();
     const hierarchy = new cv.Mat();
     cv.findContours(roi, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-    let melhorPts = null, maiorArea = 0;
+    let melhor = null, maiorArea = 0, melhorPts = null;
     for (let i = 0; i < contours.size(); i++) {
       const cnt = contours.get(i);
       const area = cv.contourArea(cnt);
       if (area > maiorArea && area > areaMinima) {
         maiorArea = area;
-        melhorPts = Array.from(cnt.data32S);
+        melhorPts = Array.from(cnt.data32S); // [x0,y0,x1,y1,...]
       }
       cnt.delete();
     }
     if (melhorPts) {
+      // em vez de 1 pixel extremo (sensivel a ruido) ou o centroide do
+      // blob inteiro (sensivel a sombra parcial), usa a MEDIA dos pontos
+      // dentro do percentil 10% mais extremo -- suaviza ruido sem incluir
+      // a "massa" inteira do blob
       const metrica = REGIOES_METRICA[nome];
       const valores = [];
-      for (let k = 0; k < melhorPts.length; k += 2) valores.push(metrica({ x: melhorPts[k], y: melhorPts[k + 1] }));
+      for (let k = 0; k < melhorPts.length; k += 2) {
+        valores.push(metrica({ x: melhorPts[k], y: melhorPts[k + 1] }));
+      }
       const ordenados = [...valores].sort((a, b) => a - b);
-      const limiar = ordenados[Math.max(0, Math.floor(ordenados.length * 0.10) - 1)];
+      const limiarPercentil = ordenados[Math.max(0, Math.floor(ordenados.length * 0.10) - 1)];
       let somaX = 0, somaY = 0, count = 0;
       for (let k = 0; k < melhorPts.length; k += 2) {
-        if (valores[k / 2] <= limiar) { somaX += melhorPts[k]; somaY += melhorPts[k + 1]; count++; }
+        if (valores[k / 2] <= limiarPercentil) {
+          somaX += melhorPts[k]; somaY += melhorPts[k + 1]; count++;
+        }
       }
-      cantos[nome] = { cx: rectX0 + somaX / count, cy: rectY0 + somaY / count };
+      melhor = { cx: rectX0 + somaX / count, cy: rectY0 + somaY / count };
     }
+    if (melhor) cantos[nome] = melhor;
+
     roi.delete(); contours.delete(); hierarchy.delete();
   }
-  gray.delete(); thresh.delete();
-  return cantos;
+
+  gray.delete();
+
+  return cantos; // objeto com 0 a 4 chaves (top_left, top_right, bottom_left, bottom_right)
 }
 
-function corrigirPerspectiva(src, cantosOrdenados) {
+function detectarCantos(src) {
+  const cantos = detectarCantosParcial(src);
+  const nomes = ['top_left', 'top_right', 'bottom_right', 'bottom_left'];
+  if (nomes.every(n => cantos[n])) {
+    return nomes.map(n => cantos[n]);
+  }
+  return null;
+}
+
+function corrigirPerspectiva(src, cantos) {
   const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-    cantosOrdenados[0].cx, cantosOrdenados[0].cy,
-    cantosOrdenados[1].cx, cantosOrdenados[1].cy,
-    cantosOrdenados[2].cx, cantosOrdenados[2].cy,
-    cantosOrdenados[3].cx, cantosOrdenados[3].cy,
+    cantos[0].cx, cantos[0].cy,
+    cantos[1].cx, cantos[1].cy,
+    cantos[2].cx, cantos[2].cy,
+    cantos[3].cx, cantos[3].cy,
   ]);
-  const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, OUT_W, 0, OUT_W, OUT_H, 0, OUT_H]);
+  const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+    0, 0,  OUT_W, 0,  OUT_W, OUT_H,  0, OUT_H,
+  ]);
   const M = cv.getPerspectiveTransform(srcTri, dstTri);
   const dst = new cv.Mat();
   cv.warpPerspective(src, dst, M, new cv.Size(OUT_W, OUT_H));
@@ -410,104 +551,266 @@ function localizarRegiaoQR(warpedMat) {
   const w = warpedMat.cols, h = warpedMat.rows;
   const gray = new cv.Mat();
   cv.cvtColor(warpedMat, gray, cv.COLOR_RGBA2GRAY);
+
+  // regiao ampla onde o QR pode estar (topo direito, com folga generosa)
   const x0 = Math.floor(0.55 * w), x1 = w;
   const y0 = 0, y1 = Math.floor(0.20 * h);
   const rect = new cv.Rect(x0, y0, x1 - x0, y1 - y0);
   const roi = gray.roi(rect);
+
   const thresh = new cv.Mat();
   cv.threshold(roi, thresh, 120, 255, cv.THRESH_BINARY_INV);
+
+  // dilatacao forte: funde os modulos do QR num blob solido, mas nao
+  // funde as linhas finas de texto do cabecalho do cartao
   const kernel = cv.Mat.ones(15, 15, cv.CV_8U);
   const dilatado = new cv.Mat();
   cv.dilate(thresh, dilatado, kernel, new cv.Point(-1, -1), 2);
+
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
   cv.findContours(dilatado, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
   let melhor = null, maiorArea = 0;
   for (let i = 0; i < contours.size(); i++) {
     const cnt = contours.get(i);
     const area = cv.contourArea(cnt);
     const br = cv.boundingRect(cnt);
     const aspect = br.height > 0 ? br.width / br.height : 0;
+    // o QR deve ser um blob razoavelmente grande E de proporcao ~quadrada
     if (area > 3000 && aspect > 0.7 && aspect < 1.4 && area > maiorArea) {
       maiorArea = area;
       melhor = { x: x0 + br.x, y: y0 + br.y, w: br.width, h: br.height };
     }
     cnt.delete();
   }
-  gray.delete(); roi.delete(); thresh.delete(); kernel.delete(); dilatado.delete();
-  contours.delete(); hierarchy.delete();
+
+  gray.delete(); roi.delete(); thresh.delete(); kernel.delete();
+  dilatado.delete(); contours.delete(); hierarchy.delete();
+
   return melhor;
 }
 
-function lerQRCodeDoWarped(warpedMat) {
-  const regiao = localizarRegiaoQR(warpedMat);
-  if (!regiao) return null;
-  const margem = 40;
+function tentarDecodificarComMargem(warpedMat, regiao, margem) {
   const x = Math.max(0, regiao.x - margem);
   const y = Math.max(0, regiao.y - margem);
   const w = Math.min(regiao.w + margem * 2, warpedMat.cols - x);
   const h = Math.min(regiao.h + margem * 2, warpedMat.rows - y);
   if (w <= 0 || h <= 0) return null;
+
   let roiMat;
   try {
-    roiMat = warpedMat.roi(new cv.Rect(x, y, w, h));
-  } catch (e) { return null; }
-  const tmp = document.createElement('canvas');
-  tmp.width = roiMat.cols; tmp.height = roiMat.rows;
-  cv.imshow(tmp, roiMat);
+    const rect = new cv.Rect(x, y, w, h);
+    roiMat = warpedMat.roi(rect);
+  } catch (e) {
+    return null;
+  }
+
+  const tmpCanvas = document.createElement('canvas');
+  tmpCanvas.width = roiMat.cols;
+  tmpCanvas.height = roiMat.rows;
+  cv.imshow(tmpCanvas, roiMat);
   roiMat.delete();
-  const ctx = tmp.getContext('2d');
-  const imgData = ctx.getImageData(0, 0, tmp.width, tmp.height);
-  const resultado = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'attemptBoth' });
+
+  const ctx = tmpCanvas.getContext('2d');
+  const imgData = ctx.getImageData(0, 0, tmpCanvas.width, tmpCanvas.height);
+  const resultado = jsQR(imgData.data, imgData.width, imgData.height, {
+    inversionAttempts: 'attemptBoth',
+  });
   return resultado ? resultado.data : null;
 }
 
-const Y_REFERENCIA = { esquerda: [426, 513, 600, 692, 776], direita: [446, 531, 619, 705, 791] };
-const NUMEROS_QUESTAO = { esquerda: [1, 2, 3, 4, 5], direita: [6, 7, 8, 9, 10] };
-
-function atribuirQuestoes(linhasValidas, yReferencia) {
-  if (linhasValidas.length === 0) return {};
-  const comY = linhasValidas.map(linha => ({ linha, y: linha.reduce((s, p) => s + p.y, 0) / linha.length }));
-  comY.sort((a, b) => a.y - b.y);
-  const ys = comY.map(o => o.y);
-  const k = ys.length;
-  if (k === 5) { const r = {}; for (let i = 0; i < 5; i++) r[i] = comY[i].linha; return r; }
-  if (k === 1) {
-    let idx = 0, menorDist = Infinity;
-    for (let i = 0; i < yReferencia.length; i++) { const d = Math.abs(ys[0] - yReferencia[i]); if (d < menorDist) { menorDist = d; idx = i; } }
-    return { [idx]: comY[0].linha };
+function lerQRCodeDoWarped(warpedMat) {
+  const regiao = localizarRegiaoQR(warpedMat);
+  if (!regiao) {
+    console.warn('Nao foi possivel localizar a regiao do QR code');
+    return null;
   }
+
+  // O jsQR e sensivel de forma nao-linear ao tamanho exato do recorte --
+  // uma margem que falha numa foto pode funcionar perfeitamente noutra
+  // (confirmado empiricamente: a mesma regiao QR decodifica com margem de
+  // 20px mas falha com 40px, dependendo de como a grade do QR se alinha
+  // no recorte). Por isso tentamos VARIAS margens em sequencia, em vez de
+  // confiar numa unica -- e rapido (jsQR e leve) e muito mais robusto.
+  const margensParaTentar = [20, 35, 10, 50, 65, 0];
+
+  for (const margem of margensParaTentar) {
+    const resultado = tentarDecodificarComMargem(warpedMat, regiao, margem);
+    if (resultado) return resultado;
+  }
+  return null;
+}
+
+function gerarNumerosQuestao(totalQuestoes) {
+  const porColuna = totalQuestoes / 2;
+  const esquerda = [], direita = [];
+  for (let i = 1; i <= porColuna; i++) esquerda.push(i);
+  for (let i = porColuna + 1; i <= totalQuestoes; i++) direita.push(i);
+  return { esquerda, direita };
+}
+
+function obterTotalQuestoesSelecionado() {
+  const select = document.getElementById('selectQtdQuestoes');
+  const val = select ? parseInt(select.value, 10) : 10;
+  return (val && val > 0) ? val : 10;
+}
+
+function centroidePoligono(pts) {
+  const n = pts.length / 2;
+  let A = 0, Cx = 0, Cy = 0;
+  for (let i = 0; i < n; i++) {
+    const x0 = pts[i * 2], y0 = pts[i * 2 + 1];
+    const j = (i + 1) % n;
+    const x1 = pts[j * 2], y1 = pts[j * 2 + 1];
+    const cross = x0 * y1 - x1 * y0;
+    A += cross;
+    Cx += (x0 + x1) * cross;
+    Cy += (y0 + y1) * cross;
+  }
+  A *= 0.5;
+  if (Math.abs(A) < 1e-6) {
+    let sx = 0, sy = 0;
+    for (let i = 0; i < n; i++) { sx += pts[i * 2]; sy += pts[i * 2 + 1]; }
+    return { x: sx / n, y: sy / n };
+  }
+  return { x: Cx / (6 * A), y: Cy / (6 * A) };
+}
+
+function classificarForma(cnt) {
+  const area = cv.contourArea(cnt);
+  const br = cv.boundingRect(cnt);
+  const bw = br.width, bh = br.height;
+  if (bw === 0 || bh === 0 || area < 15) return null;
+
+  const fillRatio = area / (bw * bh);
+  const aspect = bw / bh;
+
+  if (aspect > 2.2 || aspect < 0.45) return 'traco';
+
+  if (fillRatio > 0.7 && aspect > 0.65 && aspect < 1.5) return 'quadrado';
+
+  if (fillRatio > 0.3 && fillRatio < 0.68 && aspect > 0.65 && aspect < 1.5) {
+    // losango (simetrico, centroide no meio) vs triangulo (massa
+    // deslocada para a base) -- centroide via formula exata do poligono
+    const centro = centroidePoligono(cnt.data32S);
+    const centroY = (centro.y - br.y) / bh;
+    return centroY > 0.55 ? 'triangulo' : 'losango';
+  }
+  return null;
+}
+
+function detectarMarcadorDaLinha(warpedGray, xColunaA, yLinha) {
+  const xIni = Math.max(0, Math.round(xColunaA - 170));
+  const xFim = Math.max(0, Math.round(xColunaA - 118));
+  const yIni = Math.max(0, Math.round(yLinha - 22));
+  const yFim = Math.min(warpedGray.rows, Math.round(yLinha + 22));
+  if (xFim <= xIni || yFim <= yIni) return [];
+
+  const rect = new cv.Rect(xIni, yIni, xFim - xIni, yFim - yIni);
+  const roi = warpedGray.roi(rect);
+  const limiar = computarLimiarOtsu(roi);
+  const thresh = new cv.Mat();
+  cv.threshold(roi, thresh, limiar, 255, cv.THRESH_BINARY_INV);
+
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
+  cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  const formasEncontradas = [];
+  for (let i = 0; i < contours.size(); i++) {
+    const cnt = contours.get(i);
+    if (cv.contourArea(cnt) >= 15) {
+      const forma = classificarForma(cnt);
+      if (forma) formasEncontradas.push(forma);
+    }
+    cnt.delete();
+  }
+  roi.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+  return formasEncontradas;
+}
+
+function posicaoPorFormas(formas) {
+  const FORMA_PARA_POS = { quadrado: 0, losango: 2, triangulo: 4 };
+  for (const f of formas) {
+    if (f in FORMA_PARA_POS) return FORMA_PARA_POS[f];
+  }
+  const nTracos = formas.filter(f => f === 'traco').length;
+  if (nTracos >= 2) return 3;
+  if (nTracos === 1) return 1;
+  return null;
+}
+
+function atribuirQuestoesColuna(linhas, warpedGray) {
+  if (linhas.length === 0) return {};
+
+  const comY = linhas
+    .map(l => ({ linha: l, y: l.reduce((s, p) => s + p.y, 0) / l.length, xA: l[0].x }))
+    .sort((a, b) => a.y - b.y);
+
+  if (comY.length === 1) {
+    // sem espacamento pra calcular indice relativo -- so aceita com
+    // marcador direto, assumindo o primeiro bloco (melhor palpite)
+    const formas = detectarMarcadorDaLinha(warpedGray, comY[0].xA, comY[0].y);
+    const pos = posicaoPorFormas(formas);
+    if (pos === null) return {};
+    return { [pos]: comY[0].linha };
+  }
+
+  const ys = comY.map(o => o.y);
   const gaps = [];
   for (let i = 1; i < ys.length; i++) gaps.push(ys[i] - ys[i - 1]);
-  gaps.sort((a, b) => a - b);
-  const espacamentoMediano = gaps[Math.floor(gaps.length / 2)];
-  let melhorErro = Infinity, melhorSlots = null;
-  for (let slotInicial = 0; slotInicial <= 5 - k; slotInicial++) {
-    const slots = [slotInicial];
-    let valido = true;
-    for (let i = 1; i < ys.length; i++) {
-      const passos = Math.max(1, Math.round((ys[i] - ys[i - 1]) / espacamentoMediano));
-      const proximo = slots[slots.length - 1] + passos;
-      if (proximo > 4) { valido = false; break; }
-      slots.push(proximo);
-    }
-    if (!valido) continue;
-    const erro = Math.abs(ys[0] - yReferencia[slots[0]]);
-    if (erro < melhorErro) { melhorErro = erro; melhorSlots = slots; }
+  const gapsOrdenados = [...gaps].sort((a, b) => a - b);
+  const espacamento = gapsOrdenados[Math.floor(gapsOrdenados.length / 2)];
+  if (!espacamento || espacamento <= 0) return {};
+
+  // indice relativo calculado de forma INCREMENTAL (passo a passo entre
+  // linhas vizinhas), nao pela distancia direta da primeira linha -- o
+  // espacamento real varia um pouco ao longo da coluna (efeito residual
+  // de perspectiva), e essa pequena variacao ACUMULA erro quando calculada
+  // de uma vez so para colunas longas (confirmado com foto real de 60
+  // questoes: deslocamento de 1 posicao a partir da 7a linha)
+  const indicesRelativos = [0];
+  for (let i = 1; i < ys.length; i++) {
+    const passo = Math.max(1, Math.round((ys[i] - ys[i - 1]) / espacamento));
+    indicesRelativos.push(indicesRelativos[i - 1] + passo);
   }
-  if (!melhorSlots) return {};
-  const r = {};
-  for (let i = 0; i < k; i++) r[melhorSlots[i]] = comY[i].linha;
-  return r;
+
+  // busca o primeiro marcador legivel para ancorar o indice absoluto
+  let ancora = null;
+  const posPorLinha = new Array(comY.length).fill(null);
+  for (let i = 0; i < comY.length; i++) {
+    const formas = detectarMarcadorDaLinha(warpedGray, comY[i].xA, comY[i].y);
+    const pos = posicaoPorFormas(formas);
+    posPorLinha[i] = pos;
+    if (ancora === null && pos !== null) {
+      ancora = pos - indicesRelativos[i];
+    }
+  }
+  if (ancora === null) return {}; // nenhum marcador legivel nessa coluna
+
+  const resultado = {};
+  for (let i = 0; i < comY.length; i++) {
+    const idxAbs = indicesRelativos[i] + ancora;
+    if (idxAbs < 0) continue; // ancora invalida, ignora essa linha
+    resultado[idxAbs] = comY[i].linha;
+  }
+  return resultado;
 }
 
 function detectarBolhas(warpedMat) {
   const gray = new cv.Mat();
   cv.cvtColor(warpedMat, gray, cv.COLOR_RGBA2GRAY);
+  melhorarContraste(gray);
+
+  // mascara do QR: usa a mesma localizacao DINAMICA da leitura do QR
+  // (nao coordenadas fixas), com margem pequena para nao apagar bolhas
+  // legitimas que fiquem proximas do QR em algumas proporcoes de foto
   const regiaoQR = localizarRegiaoQR(warpedMat);
   if (regiaoQR) {
     const margem = 8;
-    const qx = Math.max(0, regiaoQR.x - margem), qy = Math.max(0, regiaoQR.y - margem);
+    const qx = Math.max(0, regiaoQR.x - margem);
+    const qy = Math.max(0, regiaoQR.y - margem);
     const qw = Math.min(regiaoQR.w + margem * 2, gray.cols - qx);
     const qh = Math.min(regiaoQR.h + margem * 2, gray.rows - qy);
     if (qw > 0 && qh > 0) {
@@ -516,24 +819,54 @@ function detectarBolhas(warpedMat) {
       qrRoi.delete();
     }
   }
+
   const blur = new cv.Mat();
   cv.medianBlur(gray, blur, 5);
-  const blocos = { esquerda: [100, 820], direita: [870, 1650] };
-  const y0 = 170, y1 = 830;
-  const grade = {};
+
+  const blocos = {
+    esquerda: [100, 820],
+    direita: [870, 1650],
+  };
+  // y1 ampliado (era 830) -- em fotos onde a retificacao produz uma escala
+  // um pouco diferente, a 5a linha de cada bloco pode ficar mais baixa do
+  // que a faixa antiga cobria (confirmado: uma foto real tinha a linha 5
+  // em y=888, fora do limite antigo de 830, ficando impossivel de achar)
+  // faixa Y DELIBERADAMENTE GENEROSA (quase toda a altura util da pagina),
+  // em vez de um numero calibrado numa foto especifica -- numeros fixos
+  // calibrados sempre acabam ficando pequenos demais para alguma foto com
+  // escala de retificacao um pouco diferente (ja aconteceu 3x neste
+  // projeto). Deixa o agrupamento por proximidade (mais abaixo) descobrir
+  // a estrutura real das 5 linhas, em vez de assumir onde elas estao.
+  // y1 ampliado bastante para caber ate 30 linhas por coluna (cartao de
+  // 60 questoes, 6 blocos de 5) -- 30 linhas a ~78px de espacamento
+  // precisam de ~2340px, entao y1=2600 da folga confortavel mantendo
+  // margem segura antes dos cantos inferiores (~y=2900+)
+  // y1 ampliado de novo (era 2600) -- confirmado com foto real de 60
+  // questoes que a Q30/Q60 (ultima linha de cada coluna) cai perto de
+  // y=2830, alem do limite anterior. Novo limite (2900) da folga ate
+  // quase a borda inferior do papel (canonico=3000), ficando so antes
+  // dos cantos/instrucoes do rodape.
+  const y0 = 150, y1 = 2900;
   const LETRAS = ['A', 'B', 'C', 'D', 'E'];
+  const linhasPorBloco = {};
 
   for (const nome in blocos) {
     const [x0, x1] = blocos[nome];
     const rect = new cv.Rect(x0, y0, x1 - x0, y1 - y0);
     const roi = blur.roi(rect);
+
     const circles = new cv.Mat();
     cv.HoughCircles(roi, circles, cv.HOUGH_GRADIENT, 1, 40, 60, 18, 18, 35);
+
     let pontos = [];
     for (let i = 0; i < circles.cols; i++) {
-      pontos.push({ x: circles.data32F[i * 3] + x0, y: circles.data32F[i * 3 + 1] + y0, r: circles.data32F[i * 3 + 2] });
+      const cx = circles.data32F[i * 3] + x0;
+      const cy = circles.data32F[i * 3 + 1] + y0;
+      const r = circles.data32F[i * 3 + 2];
+      pontos.push({ x: cx, y: cy, r });
     }
     circles.delete(); roi.delete();
+
     pontos.sort((a, b) => a.y - b.y);
     const linhas = [];
     const tolY = 45;
@@ -545,15 +878,124 @@ function detectarBolhas(warpedMat) {
       }
       if (!colocado) linhas.push([p]);
     }
-    const linhasValidas = linhas.filter(l => l.length === 5);
-    for (const linha of linhasValidas) linha.sort((a, b) => a.x - b.x);
-    const atribuicao = atribuirQuestoes(linhasValidas, Y_REFERENCIA[nome]);
-    const numQuestoes = NUMEROS_QUESTAO[nome];
-    for (const idx in atribuicao) {
-      const q = numQuestoes[idx];
-      grade[q] = atribuicao[idx].map((p, i) => ({ letra: LETRAS[i], x: p.x, y: p.y, r: p.r }));
+
+    // Para cada agrupamento com 5 OU MAIS pontos, tenta achar o melhor
+    // subconjunto de exatamente 5 com espacamento horizontal consistente
+    // -- em vez de exigir exatamente 5 pontos (o que descarta a linha
+    // inteira quando 1 ponto espurio se mistura com 5 pontos legitimos).
+    // So aceita se a melhor combinacao encontrada tiver razao max/min de
+    // espacamento <= 3.0 (rejeita agrupamentos genuinamente espurios,
+    // como coincidencias do cabecalho ou do QR code).
+    function melhorSubconjuntoDe5(pontos) {
+      const ordenado = [...pontos].sort((a, b) => a.x - b.x);
+      const n = ordenado.length;
+      if (n < 5) return null;
+
+      let melhorRazao = Infinity, melhorCombo = null;
+      const avaliar = (indices) => {
+        const xs = indices.map(i => ordenado[i].x);
+        const gaps = [];
+        for (let i = 1; i < 5; i++) gaps.push(xs[i] - xs[i - 1]);
+        const menor = Math.min(...gaps), maior = Math.max(...gaps);
+        if (menor <= 0) return;
+        const razao = maior / menor;
+        if (razao < melhorRazao) { melhorRazao = razao; melhorCombo = indices; }
+      };
+
+      if (n === 5) {
+        avaliar([0, 1, 2, 3, 4]);
+      } else {
+        // combinacoes de 5 indices dentre n pontos (n costuma ser <=8,
+        // entao o numero de combinacoes e pequeno e barato de calcular)
+        const combinar = (start, atual) => {
+          if (atual.length === 5) { avaliar([...atual]); return; }
+          for (let i = start; i < n; i++) {
+            atual.push(i);
+            combinar(i + 1, atual);
+            atual.pop();
+          }
+        };
+        combinar(0, []);
+      }
+
+      if (melhorCombo && melhorRazao <= 3.0) {
+        return melhorCombo.map(i => ordenado[i]);
+      }
+      return null;
     }
+
+    const linhasValidas = [];
+    for (const l of linhas) {
+      // so tenta resgatar clusters com ATE 2 pontos extras (5 a 7 no
+      // total) -- clusters muito maiores (ex: 10 pontos de texto do
+      // cabecalho) quase sempre tem ALGUM subconjunto de 5 com espacamento
+      // parecido por pura coincidencia estatistica, entao exigimos que o
+      // cluster ja comece proximo do tamanho esperado
+      if (l.length < 5 || l.length > 7) continue;
+      const melhor = melhorSubconjuntoDe5(l);
+      if (melhor) linhasValidas.push(melhor);
+    }
+    // Filtro adicional: remove linhas candidatas ISOLADAS (muito mais
+    // longe de qualquer vizinha do que o espacamento tipico entre as
+    // outras linhas do bloco). Isso pega casos raros onde texto do
+    // cabecalho forma, por coincidencia, um agrupamento de 5 pontos com
+    // espacamento horizontal aceitavel -- mas sempre fica isolado no
+    // eixo Y, bem longe das linhas de bolhas reais (que ficam a uma
+    // distancia bem regular umas das outras, ~75-100px no espaco canonico)
+    function removerLinhasIsoladas(linhas, razaoMax = 1.8) {
+      if (linhas.length < 3) return linhas; // sem base suficiente pra comparar
+      const comY = linhas.map(l => ({ linha: l, y: l.reduce((s, p) => s + p.y, 0) / l.length }));
+      comY.sort((a, b) => a.y - b.y);
+      const ys = comY.map(o => o.y);
+      const gaps = [];
+      for (let i = 1; i < ys.length; i++) gaps.push(ys[i] - ys[i - 1]);
+      const gapsOrdenados = [...gaps].sort((a, b) => a - b);
+      const mediana = gapsOrdenados[Math.floor(gapsOrdenados.length / 2)];
+
+      return comY.filter((o, i) => {
+        const gapAnterior = i > 0 ? ys[i] - ys[i - 1] : Infinity;
+        const gapProximo = i < ys.length - 1 ? ys[i + 1] - ys[i] : Infinity;
+        return Math.min(gapAnterior, gapProximo) <= razaoMax * mediana;
+      }).map(o => o.linha);
+    }
+
+    linhasPorBloco[nome] = removerLinhasIsoladas(linhasValidas);
   }
+
+  // Atribuicao GENERALIZADA por coluna (nao mais limitada a 5 questoes):
+  // ancora usando o primeiro marcador legivel de cada coluna, depois usa
+  // o espacamento vertical para derivar o indice absoluto das demais.
+  const totalQuestoes = obterTotalQuestoesSelecionado();
+  const numerosQuestao = gerarNumerosQuestao(totalQuestoes);
+
+  const atribEsq = atribuirQuestoesColuna(linhasPorBloco.esquerda, gray);
+  const atribDir = atribuirQuestoesColuna(linhasPorBloco.direita, gray);
+
+  const grade = {};
+  for (const idx in atribEsq) {
+    const q = numerosQuestao.esquerda[idx];
+    if (q === undefined) continue; // indice fora do range esperado, ignora
+    grade[q] = atribEsq[idx].map((p, i) => ({ letra: LETRAS[i], x: p.x, y: p.y, r: p.r }));
+  }
+  for (const idx in atribDir) {
+    const q = numerosQuestao.direita[idx];
+    if (q === undefined) continue;
+    grade[q] = atribDir[idx].map((p, i) => ({ letra: LETRAS[i], x: p.x, y: p.y, r: p.r }));
+  }
+
+  // DIAGNOSTICO: guarda dados de cada etapa para investigar discrepancias
+  window.__debugOMR = {
+    totalQuestoes,
+    linhasPorBloco: {
+      esquerda: linhasPorBloco.esquerda.map(l => Math.round(l.reduce((s, p) => s + p.y, 0) / l.length)),
+      direita: linhasPorBloco.direita.map(l => Math.round(l.reduce((s, p) => s + p.y, 0) / l.length)),
+    },
+    questoesIdentificadas: {
+      esquerda: Object.keys(atribEsq).map(Number).sort((a,b)=>a-b),
+      direita: Object.keys(atribDir).map(Number).sort((a,b)=>a-b),
+    },
+  };
+
   gray.delete(); blur.delete();
   return grade;
 }
@@ -561,10 +1003,12 @@ function detectarBolhas(warpedMat) {
 function lerRespostas(warpedMat, grade) {
   const gray = new cv.Mat();
   cv.cvtColor(warpedMat, gray, cv.COLOR_RGBA2GRAY);
+
   const respostas = {};
   const ambiguas = new Set();
   const LIMIAR_MARCACAO = 0.28;
   const MARGEM_AMBIGUA = 0.12;
+
   for (const q in grade) {
     const bolhas = grade[q];
     const scores = {};
@@ -576,16 +1020,20 @@ function lerRespostas(warpedMat, grade) {
       mask.delete();
       scores[b.letra] = 1 - (mean[0] / 255);
     }
+
     const letras = Object.keys(scores);
     letras.sort((a, b) => scores[b] - scores[a]);
     const maior = scores[letras[0]];
     const segunda = scores[letras[1]] || 0;
-    if (maior < LIMIAR_MARCACAO) { respostas[q] = null; }
-    else {
+
+    if (maior < LIMIAR_MARCACAO) {
+      respostas[q] = null;
+    } else {
       respostas[q] = letras[0];
       if ((maior - segunda) < MARGEM_AMBIGUA) ambiguas.add(q);
     }
   }
+
   gray.delete();
   return { respostas, ambiguas };
 }

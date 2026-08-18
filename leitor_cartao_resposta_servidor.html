@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Leitor de Cartão-Resposta — Servidor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy-1: #0b1f3a;
+    --navy-2: #12315c;
+    --yellow: #ffc72c;
+    --blue: #2f7bff;
+    --ok: #1fb26b;
+    --warn: #e0a300;
+    --err: #e6473a;
+    --paper: #f7f8fb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Poppins', sans-serif;
+    background: var(--paper);
+    color: #16233d;
+  }
+  header {
+    background: linear-gradient(135deg, var(--navy-1), var(--navy-2) 60%, #163a6e);
+    color: white;
+    padding: 22px 20px 26px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  header::after {
+    content: '';
+    position: absolute;
+    right: -40px; top: -60px;
+    width: 180px; height: 180px;
+    background: radial-gradient(circle, rgba(255,199,44,0.25), transparent 70%);
+  }
+  header h1 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin: 0 0 4px;
+    letter-spacing: 0.2px;
+  }
+  header p {
+    margin: 0;
+    font-size: 0.82rem;
+    color: #b9c8e6;
+    font-weight: 400;
+  }
+  main {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 18px 16px 60px;
+  }
+  .card {
+    background: white;
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(11,31,58,0.08), 0 1px 2px rgba(11,31,58,0.06);
+    border: 1px solid #e8ecf3;
+  }
+  .modo-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .modo-btn {
+    flex: 1;
+    padding: 13px 10px;
+    border-radius: 10px;
+    border: 2px solid #e8ecf3;
+    background: white;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: #4a5a78;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .modo-btn.ativo {
+    border-color: var(--blue);
+    background: linear-gradient(135deg, var(--blue), #1a5fd6);
+    color: white;
+    box-shadow: 0 4px 10px rgba(47,123,255,0.28);
+  }
+  #canvasCapturado {
+    width: 100%;
+    border-radius: 10px;
+    background: #000;
+    display: block;
+  }
+  .video-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 210 / 297; /* proporcao real de folha A4 (retrato) */
+    overflow: hidden;
+    border-radius: 10px;
+    background: #000;
+  }
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover; /* corta o excesso dos lados, preenchendo o formato A4 */
+    display: block;
+  }
+  .btn-lanterna {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(11,31,58,0.55);
+    color: white;
+    font-size: 1.2rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(2px);
+    transition: background 0.2s ease;
+    z-index: 5;
+  }
+  .btn-lanterna.ativa {
+    background: var(--yellow);
+    box-shadow: 0 0 14px rgba(255,199,44,0.7);
+  }
+  .watermark-contagem {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 6;
+  }
+  .watermark-contagem span {
+    font-size: 7rem;
+    font-weight: 800;
+    color: rgba(255,255,255,0.85);
+    text-shadow: 0 0 24px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.4);
+    animation: pulsarContagem 1s ease-in-out;
+  }
+  @keyframes pulsarContagem {
+    0% { transform: scale(1.4); opacity: 0; }
+    30% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  .corner-bracket {
+    position: absolute;
+    width: 56px;
+    height: 56px;
+    border-color: rgba(255,199,44,0.9);
+    border-style: dashed;
+    transition: border-color 0.2s ease, border-style 0.2s ease;
+    pointer-events: none;
+  }
+  .corner-bracket.ok {
+    border-color: #1fb26b;
+    border-style: solid;
+  }
+  .corner-bracket.tl { border-width: 4px 0 0 4px; border-top-left-radius: 8px; }
+  .corner-bracket.tr { border-width: 4px 4px 0 0; border-top-right-radius: 8px; }
+  .corner-bracket.bl { border-width: 0 0 4px 4px; border-bottom-left-radius: 8px; }
+  .corner-bracket.br { border-width: 0 4px 4px 0; border-bottom-right-radius: 8px; }
+  .status-cantos {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    margin-top: 8px;
+    background: #f0f3f9;
+    border-radius: 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #4a5a78;
+  }
+  .status-cantos .dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: #d7dceb;
+    flex-shrink: 0;
+    transition: background 0.2s ease;
+  }
+  .status-cantos .dot.ok { background: #1fb26b; }
+  .btn-principal {
+    width: 100%;
+    padding: 15px;
+    margin-top: 12px;
+    border-radius: 10px;
+    border: none;
+    background: linear-gradient(135deg, var(--yellow), #ffb200);
+    color: #16233d;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(255,178,0,0.35);
+  }
+  .btn-principal:disabled {
+    opacity: 0.5;
+    box-shadow: none;
+  }
+  .btn-secundario {
+    width: 100%;
+    padding: 12px;
+    margin-top: 8px;
+    border-radius: 10px;
+    border: 2px solid #e8ecf3;
+    background: white;
+    color: #4a5a78;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  input[type=file] { display: none; }
+  .file-drop {
+    border: 2px dashed #c7d2e5;
+    border-radius: 12px;
+    padding: 36px 16px;
+    text-align: center;
+    color: #6b7a99;
+    cursor: pointer;
+    font-size: 0.88rem;
+    font-weight: 500;
+    display: block;
+  }
+  .file-drop:active { background: #f0f3f9; }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: #eef2fb;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #2f4570;
+  }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2.5px solid #c7d2e5;
+    border-top-color: var(--blue);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .qr-box {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 14px;
+    background: #f0f3f9;
+    border-radius: 10px;
+    margin-bottom: 14px;
+    gap: 10px;
+  }
+  .qr-box .label { font-size: 0.72rem; color: #6b7a99; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; }
+  .qr-box .valor { font-size: 0.82rem; font-weight: 700; color: #16233d; font-family: monospace; word-break: break-all; text-align: right; }
+  table.respostas {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+  }
+  table.respostas th {
+    text-align: left;
+    font-size: 0.7rem;
+    color: #8592ab;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 6px 4px;
+    border-bottom: 2px solid #eef1f7;
+  }
+  table.respostas td {
+    padding: 9px 4px;
+    border-bottom: 1px solid #f1f3f9;
+    font-weight: 600;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    font-weight: 700;
+    font-size: 0.82rem;
+  }
+  .badge.marcada { background: #e4f8ee; color: var(--ok); }
+  .badge.vazia { background: #fcece9; color: var(--err); }
+  .badge.ambigua { background: #fff6e0; color: var(--warn); }
+  .btn-editar-resposta {
+    background: none; border: none; cursor: pointer;
+    font-size: 0.85rem; padding: 2px 4px; margin-left: 2px;
+    opacity: 0.55; vertical-align: middle;
+  }
+  .btn-editar-resposta:active { opacity: 1; }
+  .thumb-linha {
+    height: 30px; max-width: 130px; border-radius: 5px;
+    border: 1px solid #d7dceb; vertical-align: middle;
+    margin-right: 8px; object-fit: cover; background: #f7f8fb;
+  }
+  .thumb-vazia {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 60px; color: #b6bfd1; font-size: 0.7rem;
+  }
+  .select-editar-resposta {
+    font-family: inherit; font-size: 0.85rem; padding: 4px 6px;
+    border-radius: 6px; border: 1px solid var(--blue);
+  }
+  .resumo {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .resumo .item {
+    flex: 1;
+    text-align: center;
+    padding: 10px 4px;
+    border-radius: 10px;
+    background: #f0f3f9;
+  }
+  .resumo .item .num { font-size: 1.3rem; font-weight: 800; color: var(--navy-2); }
+  .resumo .item .txt { font-size: 0.68rem; color: #6b7a99; font-weight: 600; text-transform: uppercase; }
+  canvas#canvasOverlay {
+    width: 100%;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    border: 1px solid #e8ecf3;
+    display: block;
+  }
+  .json-box {
+    background: #0b1f3a;
+    color: #9fd8b0;
+    padding: 14px;
+    border-radius: 10px;
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-size: 0.76rem;
+    line-height: 1.5;
+    overflow-x: auto;
+    white-space: pre;
+    margin: 0;
+  }
+  .btn-copiar {
+    padding: 6px 12px;
+    border-radius: 7px;
+    border: none;
+    background: var(--blue);
+    color: white;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600;
+    font-size: 0.72rem;
+    cursor: pointer;
+  }
+  .erro-box {
+    background: #fcece9;
+    color: #b8291c;
+    padding: 14px;
+    border-radius: 10px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    line-height: 1.4;
+  }
+  .rodape-teste {
+    font-size: 0.72rem;
+    color: #9aa6bd;
+    text-align: center;
+    margin-top: 18px;
+    line-height: 1.5;
+  }
+  label.check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82rem;
+    color: #4a5a78;
+    font-weight: 500;
+    margin-top: 4px;
+  }
+  .hidden { display: none !important; }
+
+  .servidor-box {
+    background: #eef2fb; border: 1px solid #d7e0f5; border-radius: 10px;
+    padding: 10px 12px; margin-bottom: 10px;
+  }
+  .servidor-box label { font-size: 0.75rem; font-weight: 700; color: #2f4570; display:block; margin-bottom:5px; }
+  .servidor-box input {
+    width: 100%; font-family: inherit; font-size: 0.85rem; padding: 8px 10px;
+    border-radius: 7px; border: 1px solid #c7d2ec; box-sizing: border-box;
+  }
+  .servidor-status { font-size: 0.72rem; margin-top: 5px; font-weight: 600; }
+  .servidor-status.ok { color: var(--ok); }
+  .servidor-status.erro { color: var(--err); }
+  .thumb-linha {
+    height: 30px; max-width: 130px; border-radius: 5px;
+    border: 1px solid #d7dceb; vertical-align: middle;
+    margin-right: 8px; object-fit: cover; background: #f7f8fb;
+  }
+  .thumb-vazia {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 60px; color: #b6bfd1; font-size: 0.7rem;
+  }
+  .btn-editar-resposta {
+    background: none; border: none; cursor: pointer;
+    font-size: 0.85rem; padding: 2px 4px; margin-left: 2px;
+    opacity: 0.55; vertical-align: middle;
+  }
+  .btn-editar-resposta:active { opacity: 1; }
+  .select-editar-resposta {
+    font-family: inherit; font-size: 0.85rem; padding: 4px 6px;
+    border-radius: 6px; border: 1px solid var(--blue);
+  }
+
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📋 Leitor de Cartão-Resposta</h1>
+  <p>Versão SERVIDOR · processamento remoto (OpenCV/Python)</p>
+</header>
+
+<main>
+
+  <div class="card">
+    <div class="servidor-box">
+      <label>🌐 Endereço do servidor de processamento</label>
+      <input type="text" id="inputServidorUrl" placeholder="http://exemplo.com:5000" autocomplete="off">
+      <div class="servidor-status" id="servidorStatus">Não testado ainda.</div>
+    </div>
+
+    <label class="check" style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-weight:600;color:#16233d;">Quantidade de questões do cartão</span>
+      <select id="selectQtdQuestoes" style="font-family:inherit;font-size:0.9rem;padding:6px 10px;border-radius:8px;border:1px solid #d7dceb;">
+        <option value="10" selected>10</option>
+        <option value="20">20</option>
+        <option value="30">30</option>
+        <option value="40">40</option>
+        <option value="50">50</option>
+        <option value="60">60</option>
+      </select>
+    </label>
+    <div class="modo-tabs">
+      <button class="modo-btn ativo" id="btnModoCamera">📷 Usar câmera</button>
+      <button class="modo-btn" id="btnModoArquivo">📁 Enviar arquivo</button>
+    </div>
+
+    <div id="painelCamera">
+      <div class="video-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <button class="btn-lanterna" id="btnLanterna" style="display:none;" title="Ligar lanterna">🔦</button>
+      </div>
+      <button class="btn-principal" id="btnCapturar">Capturar foto</button>
+      <p style="font-size:0.75rem;color:#8592ab;text-align:center;margin-top:8px;">
+        Alinhe os 4 cantos do cartão dentro da guia amarela.
+        <br><em>(Nesta versão servidor não há detecção ao vivo dos cantos —
+        isso exigiria enviar quadros continuamente para o servidor.)</em>
+      </p>
+    </div>
+
+    <div id="painelArquivo" class="hidden">
+      <label class="file-drop" id="fileDropLabel">
+        📎 Toque para escolher uma foto do cartão
+        <input type="file" id="inputArquivo" accept="image/*">
+      </label>
+    </div>
+
+    <label class="check">
+      <input type="checkbox" id="checkGabarito">
+      Comparar com gabarito de teste (cartão da Alice)
+    </label>
+  </div>
+
+  <div id="areaResultado"></div>
+
+  <p class="rodape-teste">
+    Versão de comparação de desempenho: a foto é enviada ao servidor configurado acima,
+    que roda o mesmo pipeline (OpenCV/Python) e devolve o resultado em JSON.
+  </p>
+
+</main>
+
+<canvas id="canvasCapturado" class="hidden"></canvas>
+
+<script>
+/* =========================================================================
+   CONFIGURAÇÃO DO SERVIDOR (persistida no localStorage)
+   ========================================================================= */
+const inputServidorUrl = document.getElementById('inputServidorUrl');
+const servidorStatus = document.getElementById('servidorStatus');
+inputServidorUrl.value = localStorage.getItem('servidorOmrUrl') || '';
+
+function urlServidor() {
+  return (inputServidorUrl.value || '').trim().replace(/\/$/, '');
+}
+
+inputServidorUrl.addEventListener('change', () => {
+  localStorage.setItem('servidorOmrUrl', inputServidorUrl.value.trim());
+  testarServidor();
+});
+
+async function testarServidor() {
+  const base = urlServidor();
+  if (!base) { servidorStatus.textContent = 'Preencha o endereço do servidor.'; servidorStatus.className = 'servidor-status'; return; }
+  servidorStatus.textContent = 'Testando conexão...';
+  servidorStatus.className = 'servidor-status';
+  try {
+    const resp = await fetch(base + '/', { method: 'GET' });
+    if (resp.ok) {
+      servidorStatus.textContent = '✅ Servidor respondendo.';
+      servidorStatus.className = 'servidor-status ok';
+    } else {
+      servidorStatus.textContent = `⚠️ Servidor respondeu com erro (${resp.status}).`;
+      servidorStatus.className = 'servidor-status erro';
+    }
+  } catch (e) {
+    servidorStatus.textContent = '❌ Não foi possível conectar (CORS, endereço errado, ou servidor fora do ar).';
+    servidorStatus.className = 'servidor-status erro';
+  }
+}
+if (urlServidor()) testarServidor();
+
+/* =========================================================================
+   ALTERNÂNCIA CÂMERA / ARQUIVO
+   ========================================================================= */
+const painelCamera = document.getElementById('painelCamera');
+const painelArquivo = document.getElementById('painelArquivo');
+const btnModoCamera = document.getElementById('btnModoCamera');
+const btnModoArquivo = document.getElementById('btnModoArquivo');
+const areaResultado = document.getElementById('areaResultado');
+const video = document.getElementById('video');
+const canvasCapturado = document.getElementById('canvasCapturado');
+let stream = null;
+
+btnModoCamera.onclick = () => {
+  btnModoCamera.classList.add('ativo'); btnModoArquivo.classList.remove('ativo');
+  painelCamera.classList.remove('hidden'); painelArquivo.classList.add('hidden');
+  iniciarCamera();
+};
+btnModoArquivo.onclick = () => {
+  btnModoArquivo.classList.add('ativo'); btnModoCamera.classList.remove('ativo');
+  painelArquivo.classList.remove('hidden'); painelCamera.classList.add('hidden');
+  pararCamera();
+};
+
+async function iniciarCamera() {
+  try {
+    pararCamera();
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1080 }, height: { ideal: 1920 } }
+    });
+    video.srcObject = stream;
+    await new Promise(resolve => { video.onloadedmetadata = () => { video.play(); resolve(); }; });
+    prepararLanterna();
+  } catch (err) {
+    areaResultado.innerHTML = `<div class="card"><div class="erro-box">
+      Não foi possível acessar a câmera: ${err.message}.<br>
+      Verifique se você concedeu permissão de câmera, ou use "Enviar arquivo".
+    </div></div>`;
+  }
+}
+function pararCamera() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  lanternaAtiva = false;
+  const btnLanterna = document.getElementById('btnLanterna');
+  if (btnLanterna) { btnLanterna.classList.remove('ativa'); btnLanterna.style.display = 'none'; }
+}
+
+/* lanterna (torch) -- identico ao app principal */
+let lanternaAtiva = false;
+function prepararLanterna() {
+  const btnLanterna = document.getElementById('btnLanterna');
+  lanternaAtiva = false;
+  btnLanterna.classList.remove('ativa');
+  btnLanterna.style.display = 'none';
+  const track = stream?.getVideoTracks()?.[0];
+  if (!track || typeof track.getCapabilities !== 'function') return;
+  const caps = track.getCapabilities();
+  if (caps && caps.torch) btnLanterna.style.display = 'flex';
+}
+async function alternarLanterna() {
+  const track = stream?.getVideoTracks()?.[0];
+  if (!track) return;
+  const btnLanterna = document.getElementById('btnLanterna');
+  try {
+    lanternaAtiva = !lanternaAtiva;
+    await track.applyConstraints({ advanced: [{ torch: lanternaAtiva }] });
+    btnLanterna.classList.toggle('ativa', lanternaAtiva);
+  } catch (e) {
+    lanternaAtiva = !lanternaAtiva;
+  }
+}
+document.getElementById('btnLanterna').onclick = alternarLanterna;
+
+document.getElementById('inputArquivo').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const img = new Image();
+  img.onload = () => {
+    canvasCapturado.width = img.naturalWidth;
+    canvasCapturado.height = img.naturalHeight;
+    canvasCapturado.getContext('2d').drawImage(img, 0, 0);
+    enviarParaServidor();
+  };
+  img.src = URL.createObjectURL(file);
+});
+
+/* =========================================================================
+   CAPTURA (sem deteccao ao vivo -- so desenha o frame atual do <video>)
+   ========================================================================= */
+document.getElementById('btnCapturar').onclick = () => {
+  const w = video.videoWidth, h = video.videoHeight;
+  if (!w || !h) return;
+  canvasCapturado.width = w;
+  canvasCapturado.height = h;
+  canvasCapturado.getContext('2d').drawImage(video, 0, 0, w, h);
+  pararCamera();
+  enviarParaServidor();
+};
+
+function obterTotalQuestoesSelecionado() {
+  const select = document.getElementById('selectQtdQuestoes');
+  const val = select ? parseInt(select.value, 10) : 10;
+  return (val && val > 0) ? val : 10;
+}
+
+/* =========================================================================
+   ENVIO PARA O SERVIDOR
+   ========================================================================= */
+function mostrarStatus(msg) {
+  areaResultado.innerHTML = `<div class="card"><div class="status"><div class="spinner"></div>${msg}</div></div>`;
+}
+function mostrarErro(msg) {
+  areaResultado.innerHTML = `<div class="card"><div class="erro-box">${msg}</div></div>`;
+}
+
+async function enviarParaServidor() {
+  const base = urlServidor();
+  if (!base) {
+    mostrarErro('⚠️ Preencha o endereço do servidor no topo da página antes de capturar.');
+    return;
+  }
+
+  mostrarStatus('Enviando foto para o servidor e processando...');
+  const t0 = performance.now();
+
+  try {
+    const blob = await new Promise(resolve => canvasCapturado.toBlob(resolve, 'image/jpeg', 0.92));
+    const formData = new FormData();
+    formData.append('foto', blob, 'cartao.jpg');
+    formData.append('total_questoes', String(obterTotalQuestoesSelecionado()));
+
+    const resp = await fetch(base + '/processar', { method: 'POST', body: formData });
+    const dataResp = await resp.json();
+    const elapsedTotal = performance.now() - t0;
+
+    if (!resp.ok || dataResp.erro && !dataResp.respostas) {
+      mostrarErro(`⚠️ ${dataResp.erro || 'Erro desconhecido no servidor.'}`);
+      return;
+    }
+    if (dataResp.erro) {
+      mostrarErro(`⚠️ ${dataResp.erro}`);
+      return;
+    }
+
+    renderizarResultado(dataResp, elapsedTotal);
+  } catch (e) {
+    console.error(e);
+    mostrarErro(`⚠️ Falha ao comunicar com o servidor: ${e.message}<br><br>Verifique o endereço configurado, se o servidor está no ar, e se ele permite CORS.`);
+  }
+}
+
+/* =========================================================================
+   RENDERIZAÇÃO DO RESULTADO (a partir do JSON do servidor)
+   ========================================================================= */
+const GABARITO_TESTE = {1:'A',2:'A',3:'B',4:'E',5:'C',6:'A',7:'B',8:'C',9:'D',10:'E'};
+
+function escaparHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function renderizarResultado(dataResp, elapsedTotalMs) {
+  const compararGabarito = document.getElementById('checkGabarito').checked;
+  const totalQuestoesResultado = obterTotalQuestoesSelecionado();
+
+  const respostas = {};
+  const ambiguas = new Set();
+  for (const r of dataResp.respostas) {
+    const q = parseInt(r.questao, 10);
+    respostas[q] = r.resposta;
+    if (r.ambigua) ambiguas.add(String(q));
+  }
+  const grade = dataResp.bolhas || {};
+  const qrTexto = dataResp.qrcode;
+
+  // desenha a imagem retificada (recebida em base64) + overlay colorido
+  // num canvas, do mesmo jeito que a versao client-side fazia com a Mat
+  const overlayCanvas = document.createElement('canvas');
+  overlayCanvas.id = 'canvasOverlay';
+
+  const prontoOverlay = new Promise((resolve) => {
+    if (!dataResp.imagem_retificada_base64) { resolve(); return; }
+    const img = new Image();
+    img.onload = () => {
+      overlayCanvas.width = img.naturalWidth;
+      overlayCanvas.height = img.naturalHeight;
+      const ctx = overlayCanvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      for (const q in grade) {
+        for (const b of grade[q]) {
+          const marcada = respostas[q] === b.letra;
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, b.r, 0, 2 * Math.PI);
+          ctx.lineWidth = 6;
+          if (marcada && ambiguas.has(String(q))) ctx.strokeStyle = '#e0a300';
+          else if (marcada) ctx.strokeStyle = '#1fb26b';
+          else ctx.strokeStyle = 'rgba(120,130,150,0.35)';
+          ctx.stroke();
+        }
+      }
+      resolve();
+    };
+    img.onerror = resolve;
+    img.src = dataResp.imagem_retificada_base64;
+  });
+
+  prontoOverlay.then(() => {
+    let acertos = 0, totalComparado = 0;
+    let linhasTabela = '';
+
+    function gerarThumbnailLinha(bolhas) {
+      if (!bolhas || bolhas.length === 0 || !overlayCanvas.width) return null;
+      const xs = bolhas.map(b => b.x), ys = bolhas.map(b => b.y);
+      const rMedio = bolhas.reduce((s, b) => s + b.r, 0) / bolhas.length;
+      const margemX = rMedio * 1.3, margemY = rMedio * 1.7;
+      const x0 = Math.max(0, Math.min(...xs) - margemX);
+      const x1 = Math.min(overlayCanvas.width, Math.max(...xs) + margemX);
+      const y0 = Math.max(0, Math.min(...ys) - margemY);
+      const y1 = Math.min(overlayCanvas.height, Math.max(...ys) + margemY);
+      const w = x1 - x0, h = y1 - y0;
+      if (w <= 0 || h <= 0) return null;
+      const thumb = document.createElement('canvas');
+      const escala = 2.2;
+      thumb.width = w * escala; thumb.height = h * escala;
+      const tctx = thumb.getContext('2d');
+      tctx.drawImage(overlayCanvas, x0, y0, w, h, 0, 0, thumb.width, thumb.height);
+      return thumb.toDataURL('image/jpeg', 0.85);
+    }
+
+    for (let q = 1; q <= totalQuestoesResultado; q++) {
+      const marcada = respostas[q];
+      const ambigua = ambiguas.has(String(q));
+      let badgeClass = marcada ? 'marcada' : 'vazia';
+      if (ambigua) badgeClass = 'ambigua';
+
+      let colGabarito = '';
+      if (compararGabarito) {
+        const esperado = GABARITO_TESTE[q];
+        const ok = marcada === esperado;
+        totalComparado++;
+        if (ok) acertos++;
+        colGabarito = `<td id="td-gabarito-${q}" style="color:${ok ? '#1fb26b' : '#e6473a'}">${esperado}${ok ? ' ✓' : ' ✗'}</td>`;
+      }
+
+      const thumbUrl = gerarThumbnailLinha(grade[q]);
+      const thumbHtml = thumbUrl
+        ? `<img src="${thumbUrl}" class="thumb-linha" alt="bolhas da questão ${q}">`
+        : `<span class="thumb-linha thumb-vazia">—</span>`;
+
+      linhasTabela += `
+        <tr>
+          <td>${String(q).padStart(2,'0')}</td>
+          <td id="td-resposta-${q}">
+            ${thumbHtml}
+            <span class="badge ${badgeClass}" id="badge-${q}">${marcada || '—'}</span>
+            <button class="btn-editar-resposta" onclick="editarResposta(${q})" title="Editar resposta">✏️</button>
+          </td>
+          ${compararGabarito ? colGabarito : ''}
+        </tr>`;
+    }
+
+    const qrHtml = qrTexto
+      ? `<div class="qr-box"><span class="label">QR Code</span><span class="valor">${qrTexto}</span></div>`
+      : `<div class="qr-box"><span class="label">QR Code</span><span class="valor" style="color:#e6473a">não lido</span></div>`;
+
+    const respostasArray = [];
+    for (let q = 1; q <= totalQuestoesResultado; q++) {
+      respostasArray.push({
+        questao: String(q).padStart(2, '0'),
+        resposta: respostas[q] || null,
+        ambigua: ambiguas.has(String(q)),
+      });
+    }
+    const jsonResultado = {
+      qrcode: qrTexto || null,
+      respostas: respostasArray,
+      tempo_processamento_servidor_ms: dataResp.tempo_processamento_ms,
+      tempo_total_com_rede_ms: Math.round(elapsedTotalMs),
+      _debug: dataResp._debug || null,
+    };
+    const jsonTexto = JSON.stringify(jsonResultado, null, 2);
+
+    window.__estadoResultado = {
+      respostas, ambiguas, totalQuestoesResultado, qrTexto,
+      elapsedMs: elapsedTotalMs, compararGabarito, jsonTexto,
+    };
+
+    areaResultado.innerHTML = `
+      <div class="card">
+        <div id="overlayHost"></div>
+        ${qrHtml}
+        <table class="respostas">
+          <thead><tr><th>Questão</th><th>Marcada</th>${compararGabarito ? '<th>Gabarito</th>' : ''}</tr></thead>
+          <tbody>${linhasTabela}</tbody>
+        </table>
+        <div class="resumo">
+          <div class="item"><div class="num">${dataResp.tempo_processamento_ms}ms</div><div class="txt">Servidor</div></div>
+          <div class="item"><div class="num">${Math.round(elapsedTotalMs)}ms</div><div class="txt">Total (c/ rede)</div></div>
+          <div class="item"><div class="num" id="resumoAmbiguas">${ambiguas.size}</div><div class="txt">Ambíguas</div></div>
+          ${compararGabarito ? `<div class="item"><div class="num" id="resumoAcuracia">${acertos}/${totalComparado}</div><div class="txt">Acurácia</div></div>` : ''}
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <span style="font-size:0.72rem;color:#6b7a99;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;">Resultado em JSON</span>
+          <button class="btn-copiar" id="btnCopiarJson">📋 Copiar</button>
+        </div>
+        <pre id="jsonOutput" class="json-box">${escaparHtml(jsonTexto)}</pre>
+      </div>
+      <button class="btn-secundario" id="btnNovaLeitura">🔄 Nova leitura</button>
+    `;
+    document.getElementById('overlayHost').appendChild(overlayCanvas);
+
+    document.getElementById('btnCopiarJson').onclick = () => {
+      navigator.clipboard.writeText(window.__estadoResultado.jsonTexto).then(() => {
+        const btn = document.getElementById('btnCopiarJson');
+        btn.textContent = '✅ Copiado!';
+        setTimeout(() => { btn.textContent = '📋 Copiar'; }, 1800);
+      });
+    };
+    document.getElementById('btnNovaLeitura').onclick = () => {
+      areaResultado.innerHTML = '';
+      if (!painelCamera.classList.contains('hidden')) iniciarCamera();
+    };
+  });
+}
+
+/* =========================================================================
+   EDIÇÃO MANUAL DA RESPOSTA (idêntico à versão client-side)
+   ========================================================================= */
+function editarResposta(q) {
+  const td = document.getElementById('td-resposta-' + q);
+  if (!td || !window.__estadoResultado) return;
+  const atual = window.__estadoResultado.respostas[q] || '';
+  const thumbEl = td.querySelector('.thumb-linha');
+  const thumbHtml = thumbEl ? thumbEl.outerHTML : '';
+  const opcoes = ['', 'A', 'B', 'C', 'D', 'E']
+    .map(l => `<option value="${l}" ${l === atual ? 'selected' : ''}>${l || '(vazio)'}</option>`)
+    .join('');
+  td.innerHTML = `${thumbHtml}<select class="select-editar-resposta" onchange="confirmarEdicaoResposta(${q}, this.value)" autofocus>${opcoes}</select>`;
+  const select = td.querySelector('select');
+  if (select) select.focus();
+}
+
+function confirmarEdicaoResposta(q, novaLetraRaw) {
+  const estado = window.__estadoResultado;
+  if (!estado) return;
+  const novaLetra = novaLetraRaw || null;
+  estado.respostas[q] = novaLetra;
+  estado.ambiguas.delete(String(q));
+
+  const badgeClass = novaLetra ? 'marcada' : 'vazia';
+  const td = document.getElementById('td-resposta-' + q);
+  if (td) {
+    const thumbEl = td.querySelector('.thumb-linha');
+    const thumbHtml = thumbEl ? thumbEl.outerHTML : '';
+    td.innerHTML = `
+      ${thumbHtml}
+      <span class="badge ${badgeClass}" id="badge-${q}">${novaLetra || '—'}</span>
+      <button class="btn-editar-resposta" onclick="editarResposta(${q})" title="Editar resposta">✏️</button>
+    `;
+  }
+
+  if (estado.compararGabarito && typeof GABARITO_TESTE !== 'undefined' && GABARITO_TESTE[q] !== undefined) {
+    const esperado = GABARITO_TESTE[q];
+    const ok = novaLetra === esperado;
+    const tdGab = document.getElementById('td-gabarito-' + q);
+    if (tdGab) { tdGab.textContent = `${esperado}${ok ? ' ✓' : ' ✗'}`; tdGab.style.color = ok ? '#1fb26b' : '#e6473a'; }
+    let acertos2 = 0, totalComparado2 = 0;
+    for (let qq = 1; qq <= estado.totalQuestoesResultado; qq++) {
+      if (GABARITO_TESTE[qq] === undefined) continue;
+      totalComparado2++;
+      if (estado.respostas[qq] === GABARITO_TESTE[qq]) acertos2++;
+    }
+    const elAcuracia = document.getElementById('resumoAcuracia');
+    if (elAcuracia) elAcuracia.textContent = `${acertos2}/${totalComparado2}`;
+  }
+
+  const elAmbiguas = document.getElementById('resumoAmbiguas');
+  if (elAmbiguas) elAmbiguas.textContent = estado.ambiguas.size;
+
+  const respostasArray = [];
+  for (let qq = 1; qq <= estado.totalQuestoesResultado; qq++) {
+    respostasArray.push({
+      questao: String(qq).padStart(2, '0'),
+      resposta: estado.respostas[qq] || null,
+      ambigua: estado.ambiguas.has(String(qq)),
+    });
+  }
+  const jsonResultado = { qrcode: estado.qrTexto || null, respostas: respostasArray };
+  estado.jsonTexto = JSON.stringify(jsonResultado, null, 2);
+  const jsonOutputEl = document.getElementById('jsonOutput');
+  if (jsonOutputEl) jsonOutputEl.textContent = estado.jsonTexto;
+}
+
+/* inicia no modo câmera por padrão */
+iniciarCamera();
+</script>
+
+</body>
+</html>

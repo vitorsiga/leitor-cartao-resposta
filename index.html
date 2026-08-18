@@ -1426,7 +1426,17 @@ function atribuirQuestoesColuna(linhas, warpedGray) {
   const espacamento = gapsOrdenados[Math.floor(gapsOrdenados.length / 2)];
   if (!espacamento || espacamento <= 0) return {};
 
-  const indicesRelativos = ys.map(y => Math.round((y - ys[0]) / espacamento));
+  // indice relativo calculado de forma INCREMENTAL (passo a passo entre
+  // linhas vizinhas), nao pela distancia direta da primeira linha -- o
+  // espacamento real varia um pouco ao longo da coluna (efeito residual
+  // de perspectiva), e essa pequena variacao ACUMULA erro quando calculada
+  // de uma vez so para colunas longas (confirmado com foto real de 60
+  // questoes: deslocamento de 1 posicao a partir da 7a linha)
+  const indicesRelativos = [0];
+  for (let i = 1; i < ys.length; i++) {
+    const passo = Math.max(1, Math.round((ys[i] - ys[i - 1]) / espacamento));
+    indicesRelativos.push(indicesRelativos[i - 1] + passo);
+  }
 
   // busca o primeiro marcador legivel para ancorar o indice absoluto
   let ancora = null;

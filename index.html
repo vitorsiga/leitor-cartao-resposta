@@ -1493,7 +1493,12 @@ function detectarBolhas(warpedMat) {
   // 60 questoes, 6 blocos de 5) -- 30 linhas a ~78px de espacamento
   // precisam de ~2340px, entao y1=2600 da folga confortavel mantendo
   // margem segura antes dos cantos inferiores (~y=2900+)
-  const y0 = 150, y1 = 2600;
+  // y1 ampliado de novo (era 2600) -- confirmado com foto real de 60
+  // questoes que a Q30/Q60 (ultima linha de cada coluna) cai perto de
+  // y=2830, alem do limite anterior. Novo limite (2900) da folga ate
+  // quase a borda inferior do papel (canonico=3000), ficando so antes
+  // dos cantos/instrucoes do rodape.
+  const y0 = 150, y1 = 2900;
   const LETRAS = ['A', 'B', 'C', 'D', 'E'];
   const linhasPorBloco = {};
 

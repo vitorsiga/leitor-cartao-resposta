@@ -304,6 +304,15 @@
     opacity: 0.55; vertical-align: middle;
   }
   .btn-editar-resposta:active { opacity: 1; }
+  .thumb-linha {
+    height: 30px; max-width: 130px; border-radius: 5px;
+    border: 1px solid #d7dceb; vertical-align: middle;
+    margin-right: 8px; object-fit: cover; background: #f7f8fb;
+  }
+  .thumb-vazia {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 60px; color: #b6bfd1; font-size: 0.7rem;
+  }
   .select-editar-resposta {
     font-family: inherit; font-size: 0.85rem; padding: 4px 6px;
     border-radius: 6px; border: 1px solid var(--blue);
@@ -1784,6 +1793,32 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
   let acertos = 0, totalComparado = 0;
   let linhasTabela = '';
   const totalQuestoesResultado = obterTotalQuestoesSelecionado();
+
+  // recorte em miniatura da linha de bolhas de cada questao, extraido da
+  // propria imagem retificada (com o overlay colorido ja desenhado) --
+  // ajuda o usuario a conferir visualmente sem precisar abrir a foto
+  // inteira. Nao depende da Mat (so do canvas, que ja foi desenhado).
+  function gerarThumbnailLinha(bolhas) {
+    if (!bolhas || bolhas.length === 0) return null;
+    const xs = bolhas.map(b => b.x), ys = bolhas.map(b => b.y);
+    const rMedio = bolhas.reduce((s, b) => s + b.r, 0) / bolhas.length;
+    const margemX = rMedio * 1.3, margemY = rMedio * 1.7;
+    const x0 = Math.max(0, Math.min(...xs) - margemX);
+    const x1 = Math.min(overlayCanvas.width, Math.max(...xs) + margemX);
+    const y0 = Math.max(0, Math.min(...ys) - margemY);
+    const y1 = Math.min(overlayCanvas.height, Math.max(...ys) + margemY);
+    const w = x1 - x0, h = y1 - y0;
+    if (w <= 0 || h <= 0) return null;
+
+    const thumb = document.createElement('canvas');
+    const escala = 2.2; // um pouco ampliado para ficar legivel mesmo pequeno
+    thumb.width = w * escala;
+    thumb.height = h * escala;
+    const tctx = thumb.getContext('2d');
+    tctx.drawImage(overlayCanvas, x0, y0, w, h, 0, 0, thumb.width, thumb.height);
+    return thumb.toDataURL('image/jpeg', 0.85);
+  }
+
   for (let q = 1; q <= totalQuestoesResultado; q++) {
     const marcada = respostas[q];
     const ambigua = ambiguas.has(String(q));
@@ -1799,10 +1834,16 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
       colGabarito = `<td id="td-gabarito-${q}" style="color:${ok ? '#1fb26b' : '#e6473a'}">${esperado}${ok ? ' ✓' : ' ✗'}</td>`;
     }
 
+    const thumbUrl = gerarThumbnailLinha(grade[q]);
+    const thumbHtml = thumbUrl
+      ? `<img src="${thumbUrl}" class="thumb-linha" alt="bolhas da questão ${q}">`
+      : `<span class="thumb-linha thumb-vazia">—</span>`;
+
     linhasTabela += `
       <tr>
         <td>${String(q).padStart(2,'0')}</td>
         <td id="td-resposta-${q}">
+          ${thumbHtml}
           <span class="badge ${badgeClass}" id="badge-${q}">${marcada || '—'}</span>
           <button class="btn-editar-resposta" onclick="editarResposta(${q})" title="Editar resposta">✏️</button>
         </td>
@@ -1894,10 +1935,12 @@ function editarResposta(q) {
   const td = document.getElementById('td-resposta-' + q);
   if (!td || !window.__estadoResultado) return;
   const atual = window.__estadoResultado.respostas[q] || '';
+  const thumbEl = td.querySelector('.thumb-linha');
+  const thumbHtml = thumbEl ? thumbEl.outerHTML : '';
   const opcoes = ['', 'A', 'B', 'C', 'D', 'E']
     .map(l => `<option value="${l}" ${l === atual ? 'selected' : ''}>${l || '(vazio)'}</option>`)
     .join('');
-  td.innerHTML = `<select class="select-editar-resposta" onchange="confirmarEdicaoResposta(${q}, this.value)" autofocus>${opcoes}</select>`;
+  td.innerHTML = `${thumbHtml}<select class="select-editar-resposta" onchange="confirmarEdicaoResposta(${q}, this.value)" autofocus>${opcoes}</select>`;
   const select = td.querySelector('select');
   if (select) select.focus();
 }
@@ -1912,7 +1955,10 @@ function confirmarEdicaoResposta(q, novaLetraRaw) {
   const badgeClass = novaLetra ? 'marcada' : 'vazia';
   const td = document.getElementById('td-resposta-' + q);
   if (td) {
+    const thumbEl = td.querySelector('.thumb-linha');
+    const thumbHtml = thumbEl ? thumbEl.outerHTML : '';
     td.innerHTML = `
+      ${thumbHtml}
       <span class="badge ${badgeClass}" id="badge-${q}">${novaLetra || '—'}</span>
       <button class="btn-editar-resposta" onclick="editarResposta(${q})" title="Editar resposta">✏️</button>
     `;

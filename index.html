@@ -132,6 +132,27 @@
     background: var(--yellow);
     box-shadow: 0 0 14px rgba(255,199,44,0.7);
   }
+  .watermark-contagem {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 6;
+  }
+  .watermark-contagem span {
+    font-size: 7rem;
+    font-weight: 800;
+    color: rgba(255,255,255,0.85);
+    text-shadow: 0 0 24px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.4);
+    animation: pulsarContagem 1s ease-in-out;
+  }
+  @keyframes pulsarContagem {
+    0% { transform: scale(1.4); opacity: 0; }
+    30% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
   .corner-bracket {
     position: absolute;
     width: 56px;
@@ -277,6 +298,16 @@
   .badge.marcada { background: #e4f8ee; color: var(--ok); }
   .badge.vazia { background: #fcece9; color: var(--err); }
   .badge.ambigua { background: #fff6e0; color: var(--warn); }
+  .btn-editar-resposta {
+    background: none; border: none; cursor: pointer;
+    font-size: 0.85rem; padding: 2px 4px; margin-left: 2px;
+    opacity: 0.55; vertical-align: middle;
+  }
+  .btn-editar-resposta:active { opacity: 1; }
+  .select-editar-resposta {
+    font-family: inherit; font-size: 0.85rem; padding: 4px 6px;
+    border-radius: 6px; border: 1px solid var(--blue);
+  }
   .resumo {
     display: flex;
     gap: 10px;
@@ -383,6 +414,7 @@
         <div class="corner-bracket bl" id="cornerBL"></div>
         <div class="corner-bracket br" id="cornerBR"></div>
         <button class="btn-lanterna" id="btnLanterna" style="display:none;" title="Ligar lanterna">🔦</button>
+        <div class="watermark-contagem" id="watermarkContagem" style="display:none;"></div>
       </div>
       <div class="status-cantos" id="statusCantos">
         <span id="textoCantos">Aponte para o cartão...</span>
@@ -649,9 +681,9 @@ function pararCamera() {
    ========================================================================= */
 let liveCheckInterval = null;
 let liveCheckRodando = false;
-let contagemEstavel = 0;
+let inicioContagemMs = null;
 let capturaAutomaticaDisparada = false;
-const LIMIAR_ESTABILIDADE = 3; // numero de checks consecutivos com 4/4 cantos antes de capturar (~2.1s)
+const DURACAO_CONTAGEM_MS = 3000; // 3 segundos reais, nao numero de checks
 const liveCanvas = document.createElement('canvas');
 
 function iniciarVerificacaoAoVivo() {
@@ -662,8 +694,21 @@ function iniciarVerificacaoAoVivo() {
 function pararVerificacaoAoVivo() {
   if (liveCheckInterval) { clearInterval(liveCheckInterval); liveCheckInterval = null; }
   liveCheckRodando = false;
-  contagemEstavel = 0;
+  inicioContagemMs = null;
   capturaAutomaticaDisparada = false;
+  esconderWatermarkContagem();
+}
+
+function mostrarWatermarkContagem(numero) {
+  const el = document.getElementById('watermarkContagem');
+  if (!el) return;
+  el.style.display = 'flex';
+  el.innerHTML = `<span key="${numero}">${numero}</span>`;
+}
+
+function esconderWatermarkContagem() {
+  const el = document.getElementById('watermarkContagem');
+  if (el) { el.style.display = 'none'; el.innerHTML = ''; }
 }
 
 function verificarCantosAoVivo() {
@@ -762,12 +807,17 @@ function atualizarIndicadorCantos(cantos, procW) {
       return;
     }
     if (autoCapturaAtiva) {
-      contagemEstavel++;
-      const faltam = LIMIAR_ESTABILIDADE - contagemEstavel;
-      if (faltam > 0) {
-        textoEl.textContent = `✅ Mantenha parado... capturando em ${faltam}`;
+      if (inicioContagemMs === null) inicioContagemMs = performance.now();
+      const decorridoMs = performance.now() - inicioContagemMs;
+      const restanteMs = DURACAO_CONTAGEM_MS - decorridoMs;
+
+      if (restanteMs > 0) {
+        const segundosRestantes = Math.ceil(restanteMs / 1000);
+        textoEl.textContent = `✅ Mantenha parado... capturando em ${segundosRestantes}`;
+        mostrarWatermarkContagem(segundosRestantes);
       } else {
         textoEl.textContent = '📸 Capturando...';
+        esconderWatermarkContagem();
         capturaAutomaticaDisparada = true;
         pararVerificacaoAoVivo();
         setTimeout(() => dispararCapturaAutomatica(), 150);
@@ -776,7 +826,8 @@ function atualizarIndicadorCantos(cantos, procW) {
       textoEl.textContent = '✅ Pronto! Toque em "Capturar foto"';
     }
   } else {
-    contagemEstavel = 0;
+    inicioContagemMs = null; // perdeu algum canto -- reinicia a contagem
+    esconderWatermarkContagem();
     textoEl.textContent = count === 0
       ? 'Aponte para o cartão...'
       : `Ajuste o enquadramento (${count}/4 cantos visíveis)`;
@@ -1745,13 +1796,16 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
       const ok = marcada === esperado;
       totalComparado++;
       if (ok) acertos++;
-      colGabarito = `<td style="color:${ok ? '#1fb26b' : '#e6473a'}">${esperado}${ok ? ' ✓' : ' ✗'}</td>`;
+      colGabarito = `<td id="td-gabarito-${q}" style="color:${ok ? '#1fb26b' : '#e6473a'}">${esperado}${ok ? ' ✓' : ' ✗'}</td>`;
     }
 
     linhasTabela += `
       <tr>
         <td>${String(q).padStart(2,'0')}</td>
-        <td><span class="badge ${badgeClass}">${marcada || '—'}</span></td>
+        <td id="td-resposta-${q}">
+          <span class="badge ${badgeClass}" id="badge-${q}">${marcada || '—'}</span>
+          <button class="btn-editar-resposta" onclick="editarResposta(${q})" title="Editar resposta">✏️</button>
+        </td>
         ${compararGabarito ? colGabarito : ''}
       </tr>`;
   }
@@ -1780,6 +1834,14 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
   };
   const jsonTexto = JSON.stringify(jsonResultado, null, 2);
 
+  // guarda o estado atual (mutavel) para o botao de editar resposta poder
+  // atualizar tabela, resumo e JSON depois, sem precisar da Mat (que ja
+  // foi liberada pelo chamador logo apos essa funcao retornar)
+  window.__estadoResultado = {
+    respostas, ambiguas, totalQuestoesResultado, qrTexto, elapsedMs,
+    compararGabarito, jsonTexto,
+  };
+
   areaResultado.innerHTML = `
     <div class="card">
       ${avisoParcial ? `<div class="erro-box" style="margin-bottom:14px;">${avisoParcial}</div>` : ''}
@@ -1791,8 +1853,8 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
       </table>
       <div class="resumo">
         <div class="item"><div class="num">${elapsedMs.toFixed(0)}ms</div><div class="txt">Tempo</div></div>
-        <div class="item"><div class="num">${ambiguas.size}</div><div class="txt">Ambíguas</div></div>
-        ${compararGabarito ? `<div class="item"><div class="num">${acertos}/${totalComparado}</div><div class="txt">Acurácia</div></div>` : ''}
+        <div class="item"><div class="num" id="resumoAmbiguas">${ambiguas.size}</div><div class="txt">Ambíguas</div></div>
+        ${compararGabarito ? `<div class="item"><div class="num" id="resumoAcuracia">${acertos}/${totalComparado}</div><div class="txt">Acurácia</div></div>` : ''}
       </div>
     </div>
 
@@ -1809,7 +1871,7 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
   document.getElementById('overlayHost').appendChild(overlayCanvas);
 
   document.getElementById('btnCopiarJson').onclick = () => {
-    navigator.clipboard.writeText(jsonTexto).then(() => {
+    navigator.clipboard.writeText(window.__estadoResultado.jsonTexto).then(() => {
       const btn = document.getElementById('btnCopiarJson');
       btn.textContent = '✅ Copiado!';
       setTimeout(() => { btn.textContent = '📋 Copiar'; }, 1800);
@@ -1820,6 +1882,81 @@ function renderizarResultado(warpedMat, grade, respostas, qrTexto, elapsedMs, av
     if (!painelCamera.classList.contains('hidden')) iniciarCamera();
   };
   document.getElementById('btnBaixarFotoResultado').onclick = baixarFotoOriginal;
+}
+
+/* =========================================================================
+   EDIÇÃO MANUAL DA RESPOSTA (botão ✏️ na tabela de resultados)
+   Não depende da Mat retificada (ja foi liberada) -- atualiza direto o
+   estado em memoria (window.__estadoResultado) e reflete na tabela,
+   resumo e JSON exibido/copiavel.
+   ========================================================================= */
+function editarResposta(q) {
+  const td = document.getElementById('td-resposta-' + q);
+  if (!td || !window.__estadoResultado) return;
+  const atual = window.__estadoResultado.respostas[q] || '';
+  const opcoes = ['', 'A', 'B', 'C', 'D', 'E']
+    .map(l => `<option value="${l}" ${l === atual ? 'selected' : ''}>${l || '(vazio)'}</option>`)
+    .join('');
+  td.innerHTML = `<select class="select-editar-resposta" onchange="confirmarEdicaoResposta(${q}, this.value)" autofocus>${opcoes}</select>`;
+  const select = td.querySelector('select');
+  if (select) select.focus();
+}
+
+function confirmarEdicaoResposta(q, novaLetraRaw) {
+  const estado = window.__estadoResultado;
+  if (!estado) return;
+  const novaLetra = novaLetraRaw || null;
+  estado.respostas[q] = novaLetra;
+  estado.ambiguas.delete(String(q)); // confirmado manualmente, remove flag de ambiguidade
+
+  const badgeClass = novaLetra ? 'marcada' : 'vazia';
+  const td = document.getElementById('td-resposta-' + q);
+  if (td) {
+    td.innerHTML = `
+      <span class="badge ${badgeClass}" id="badge-${q}">${novaLetra || '—'}</span>
+      <button class="btn-editar-resposta" onclick="editarResposta(${q})" title="Editar resposta">✏️</button>
+    `;
+  }
+
+  if (estado.compararGabarito && typeof GABARITO_TESTE !== 'undefined' && GABARITO_TESTE[q] !== undefined) {
+    const esperado = GABARITO_TESTE[q];
+    const ok = novaLetra === esperado;
+    const tdGab = document.getElementById('td-gabarito-' + q);
+    if (tdGab) {
+      tdGab.textContent = `${esperado}${ok ? ' ✓' : ' ✗'}`;
+      tdGab.style.color = ok ? '#1fb26b' : '#e6473a';
+    }
+    let acertos2 = 0, totalComparado2 = 0;
+    for (let qq = 1; qq <= estado.totalQuestoesResultado; qq++) {
+      if (GABARITO_TESTE[qq] === undefined) continue;
+      totalComparado2++;
+      if (estado.respostas[qq] === GABARITO_TESTE[qq]) acertos2++;
+    }
+    const elAcuracia = document.getElementById('resumoAcuracia');
+    if (elAcuracia) elAcuracia.textContent = `${acertos2}/${totalComparado2}`;
+  }
+
+  const elAmbiguas = document.getElementById('resumoAmbiguas');
+  if (elAmbiguas) elAmbiguas.textContent = estado.ambiguas.size;
+
+  // reconstroi o JSON exibido/copiavel com a edicao aplicada
+  const respostasArray = [];
+  for (let qq = 1; qq <= estado.totalQuestoesResultado; qq++) {
+    respostasArray.push({
+      questao: String(qq).padStart(2, '0'),
+      resposta: estado.respostas[qq] || null,
+      ambigua: estado.ambiguas.has(String(qq)),
+    });
+  }
+  const jsonResultado = {
+    qrcode: estado.qrTexto || null,
+    respostas: respostasArray,
+    tempo_processamento_ms: Math.round(estado.elapsedMs),
+    _debug: window.__debugOMR || null,
+  };
+  estado.jsonTexto = JSON.stringify(jsonResultado, null, 2);
+  const jsonOutputEl = document.getElementById('jsonOutput');
+  if (jsonOutputEl) jsonOutputEl.textContent = estado.jsonTexto;
 }
 
 function escaparHtml(str) {
